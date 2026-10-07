@@ -1,0 +1,66 @@
+# ====================================================
+# Aetherix — Docker Compose
+# Brings up backend + postgres + cloudflared tunnel.
+# Puku CLI stays on the host (per docs §26).
+# ====================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aetherix-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aetherix-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aetherix-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_MINUTES: ${JWT_EXPIRES_MINUTES}
+      PUKU_WORKER_TOKEN: ${PUKU_WORKER_TOKEN}
+      BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL}
+    ports:
+      # cloudflared reaches the backend on 8000 INSIDE the docker network.
+      # Exposing to host is optional; tunnel does the heavy lifting.
+      - "127.0.0.1:8000:8000"
+    networks:
+      - aetherix-net
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: aetherix-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - backend
+    networks:
+      - aetherix-net
+
+volumes:
+  postgres-data:
+
+networks:
+  aetherix-net:
+    driver: bridge

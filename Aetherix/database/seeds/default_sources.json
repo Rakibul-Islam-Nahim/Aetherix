@@ -1,0 +1,32 @@
+[
+  {
+    "name": "Krebs on Security",
+    "url": "https://krebsonsecurity.com/feed/",
+    "type": "rss",
+    "category": "Cybersecurity"
+  },
+  {
+    "name": "The Verge",
+    "url": "https://www.theverge.com/rss/index.xml",
+    "type": "rss",
+    "category": "Technology"
+  },
+  {
+    "name": "Ars Technica",
+    "url": "https://feeds.arstechnica.com/arstechnica/index",
+    "type": "rss",
+    "category": "Technology"
+  },
+  {
+    "name": "AWS News Blog",
+    "url": "https://aws.amazon.com/about-aws/whats-new/recent/feed/",
+    "type": "rss",
+    "category": "Cloud"
+  },
+  {
+    "name": "Hacker News (frontpage)",
+    "url": "https://hnrss.org/frontpage",
+    "type": "rss",
+    "category": "Technology"
+  }
+]

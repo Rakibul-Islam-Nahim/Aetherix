@@ -1,0 +1,106 @@
+"""Pydantic v2 schemas exposed by the REST API and MCP."""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+
+
+# -------- health --------
+class HealthResponse(BaseModel):
+    status: Literal["ok", "degraded"]
+    db: bool
+    version: str = "0.1.0"
+
+
+# -------- sources --------
+class SourceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    url: HttpUrl
+    type: str
+    enabled: bool
+    category: str | None
+    last_checked_at: datetime | None
+    created_at: datetime
+
+
+# -------- categories --------
+class CategoryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    description: str | None
+
+
+# -------- articles --------
+class ArticleSummary(BaseModel):
+    """List-row representation of an article."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    canonical_url: HttpUrl
+    source_id: int
+    importance_score: float | None
+    processing_status: str
+    published_at: datetime | None
+    discovered_at: datetime
+
+
+class ArticleDetail(ArticleSummary):
+    author: str | None
+    summary: str | None
+    what_happened: str | None
+    why_it_matters: str | None
+    categories: list[CategoryOut] = Field(default_factory=list)
+    source: SourceOut
+
+
+class PublishedArticle(BaseModel):
+    """Payload Puku sends to /mcp/publish_article."""
+    canonical_url: HttpUrl
+    source_external_id: int | None = None
+    title: str
+    author: str | None = None
+    published_at: datetime | None = None
+    summary: str | None = None
+    what_happened: str | None = None
+    why_it_matters: str | None = None
+    importance_score: float | None = Field(default=None, ge=1, le=10)
+    content_hash: str | None = None
+    categories: list[str] = Field(default_factory=list)
+
+
+class PublishAck(BaseModel):
+    article_id: int
+    created: bool
+    status: str
+
+
+# -------- bookmarks --------
+class BookmarkIn(BaseModel):
+    article_id: int
+
+
+class BookmarkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    article_id: int
+    created_at: datetime
+
+
+# -------- auth (Flutter devices) --------
+class DeviceRegisterIn(BaseModel):
+    name: str
+    platform: Literal["android", "windows", "ios", "web", "linux", "macos"]
+
+
+class DeviceRegisterOut(BaseModel):
+    user_id: int
+    access_token: str
+    expires_in_minutes: int

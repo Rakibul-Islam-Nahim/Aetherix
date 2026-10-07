@@ -1,0 +1,147 @@
+"""Read/write helpers for Article/Sources/Bookmarks."""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Sequence
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.models.orm import (
+    Article,
+    ArticleCategory,
+    Bookmark,
+    Category,
+    ProcessingStatus,
+    Source,
+)
+
+
+# -------- sources --------
+async def list_enabled_sources(session: AsyncSession) -> Sequence[Source]:
+    stmt = select(Source).where(Source.enabled.is_(True)).order_by(Source.name)
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def get_source_by_name(session: AsyncSession, name: str) -> Source | None:
+    stmt = select(Source).where(Source.name == name)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def touch_source(session: AsyncSession, source: Source) -> None:
+    source.last_checked_at = datetime.utcnow()
+    session.add(source)
+    await session.flush()
+
+
+# -------- categories --------
+async def get_or_create_category(session: AsyncSession, name: str) -> Category:
+    stmt = select(Category).where(Category.name == name)
+    cat = (await session.execute(stmt)).scalar_one_or_none()
+    if cat is None:
+        cat = Category(name=name)
+        session.add(cat)
+        await session.flush()
+    return cat
+
+
+# -------- articles --------
+async def find_by_canonical(session: AsyncSession, canonical_url: str) -> Article | None:
+    stmt = select(Article).where(Article.canonical_url == canonical_url)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def list_recent_articles(
+    session: AsyncSession, *, limit: int = 50, offset: int = 0
+) -> Sequence[Article]:
+    stmt = (
+        select(Article)
+        .where(Article.processing_status == ProcessingStatus.PROCESSED.value)
+        .order_by(Article.published_at.desc().nulls_last(), Article.discovered_at.desc())
+        .limit(limit)
+        .offset(offset)
+        .options(selectinload(Article.source))
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def get_article_with_relations(session: AsyncSession, article_id: int) -> Article | None:
+    stmt = (
+        select(Article)
+        .where(Article.id == article_id)
+        .options(selectinload(Article.categories), selectinload(Article.source))
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def upsert_processed_article(
+    session: AsyncSession,
+    *,
+    canonical_url: str,
+    title: str,
+    source: Source,
+    summary: str | None,
+    what_happened: str | None,
+    why_it_matters: str | None,
+    importance_score: float | None,
+    content_hash: str | None,
+    categories: list[str],
+    author: str | None,
+    published_at: datetime | None,
+) -> tuple[Article, bool]:
+    """Insert if new, update if existing. Returns (article, created)."""
+    article = await find_by_canonical(session, canonical_url)
+    created = False
+    if article is None:
+        article = Article(
+            canonical_url=canonical_url,
+            url=canonical_url,
+            title=title,
+            source_id=source.id,
+            author=author,
+            published_at=published_at,
+            processing_status=ProcessingStatus.PROCESSED.value,
+        )
+        session.add(article)
+        created = True
+
+    article.title = title
+    article.summary = summary
+    article.what_happened = what_happened
+    article.why_it_matters = why_it_matters
+    article.importance_score = importance_score
+    article.content_hash = content_hash
+    article.author = author or article.author
+    article.published_at = published_at or article.published_at
+    article.processing_status = ProcessingStatus.PROCESSED.value
+
+    # categories
+    resolved: list[Category] = []
+    for name in categories:
+        cat = await get_or_create_category(session, name)
+        resolved.append(cat)
+    article.categories = resolved
+
+    await session.flush()
+    return article, created
+
+
+async def mark_processed(session: AsyncSession, canonical_url: str) -> None:
+    article = await find_by_canonical(session, canonical_url)
+    if article:
+        article.processing_status = ProcessingStatus.PROCESSED.value
+        await session.flush()
+
+
+# -------- bookmarks --------
+async def add_bookmark(session: AsyncSession, article_id: int) -> Bookmark:
+    bookmark = Bookmark(article_id=article_id)
+    session.add(bookmark)
+    await session.flush()
+    return bookmark
+
+
+async def list_bookmarks(session: AsyncSession) -> Sequence[Bookmark]:
+    stmt = select(Bookmark).order_by(Bookmark.created_at.desc())
+    return (await session.execute(stmt)).scalars().all()

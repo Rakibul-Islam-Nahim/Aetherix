@@ -1,0 +1,40 @@
+name: aetherix_app
+description: "Personal tech-news intelligence client (Android + Windows)."
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # state management
+  flutter_riverpod: ^2.6.1
+
+  # networking
+  dio: ^5.7.0
+
+  # storage
+  shared_preferences: ^2.3.4
+
+  # navigation
+  go_router: ^14.6.2
+
+  # utilities
+  intl: ^0.19.0
+  url_launcher: ^6.3.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  riverpod_lint: ^2.6.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
