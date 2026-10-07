@@ -101,20 +101,33 @@ install_puku() {
     ok "Puku already installed: $(puku --version 2>/dev/null || echo 'unknown version')"
     return 0
   fi
-  # Placeholder install — replace with the real distribution source.
-  warn "No official Puku install script known to this bootstrap yet."
-  warn "Falling back to a stub in /usr/local/bin/puku so the cron job is valid."
-  warn "Replace this block with: curl -fsSL https://puku.dev/install.sh | bash"
-  sudo tee "${PUKU_BIN_DIR}/puku" > /dev/null <<'STUB'
+  # Drop the real Puku binary at /usr/local/bin/puku when available.
+  # For now, install a Python wrapper that drives the MCP loop end-to-end.
+  # The wrapper reads /opt/aetherix/scripts/puku_worker.py from the cloned
+  # repo and invokes it with the AETHERIX_WORKER_TOKEN from .env.
+  if [[ -f "${INSTALL_DIR}/scripts/puku_worker.py" ]]; then
+    sudo tee "${PUKU_BIN_DIR}/puku" > /dev/null <<EOF
 #!/usr/bin/env bash
-# Minimal Puku stub for Aetherix bootstrap.
-# Replace once the real Puku CLI is installed on the host.
-echo "[puku-stub $(date -Is)] would run TechNewsAgent now"
-echo "[puku-stub] config: ${PUKU_CONFIG:-$HOME/.puku/config.json}"
+# Aetherix Puku wrapper — runs scripts/puku_worker.py from the cloned repo.
+# Replace this with the real Puku CLI binary once it ships.
+set -euo pipefail
+exec python3 "${INSTALL_DIR}/scripts/puku_worker.py" \\
+  --base "\${AETHERIX_BACKEND_URL:-http://127.0.0.1:8000}" \\
+  --token "\${AETHERIX_WORKER_TOKEN:?AETHERIX_WORKER_TOKEN is required}"
+EOF
+    sudo chmod +x "${PUKU_BIN_DIR}/puku"
+    ok "Puku wrapper installed at ${PUKU_BIN_DIR}/puku"
+    ok "Worker source: ${INSTALL_DIR}/scripts/puku_worker.py"
+    warn "Set OPENAI_API_KEY in /opt/aetherix/.env to enable real summarization."
+  else
+    warn "${INSTALL_DIR}/scripts/puku_worker.py missing — falling back to echo stub."
+    sudo tee "${PUKU_BIN_DIR}/puku" > /dev/null <<'STUB'
+#!/usr/bin/env bash
+echo "[puku-stub $(date -Is)] TechNewsAgent no-op"
 exit 0
 STUB
-  sudo chmod +x "${PUKU_BIN_DIR}/puku"
-  ok "Stub Puku installed at ${PUKU_BIN_DIR}/puku"
+    sudo chmod +x "${PUKU_BIN_DIR}/puku"
+  fi
 }
 
 # ---------- 3. FVM + latest stable Flutter ----------
@@ -205,12 +218,27 @@ bring_up_containers() {
 
 # ---------- 7. cron entry ----------
 install_cron() {
-  step "Installing 15-minute Puku cron entry"
-  CRON_LINE="${SCHEDULER_CRON} /usr/local/bin/puku run --config /opt/aetherix/puku --agent TechNewsAgent >> /var/log/aetherix-puku.log 2>&1"
-  ( crontab -l 2>/dev/null | grep -v 'puku run' ; echo "$CRON_LINE" ) | crontab -
-  sudo touch /var/log/aetherix-puku.log
-  sudo chown "$USER":"$USER" /var/log/aetherix-puku.log
-  ok "Cron installed: '${CRON_LINE}'"
+  step "Installing 15-minute cron entries (RSS ingest + Puku processing)"
+
+  # RSS ingest — hits the backend's internal endpoint with the worker token.
+  # We source /opt/aetherix/.env so AETHERIX_WORKER_TOKEN is set inside cron.
+  RSS_CRON_LINE="${SCHEDULER_CRON} set -a; . /opt/aetherix/.env; set +a; curl -fsS -X POST http://127.0.0.1:8000/internal/ingest-all -H \"Authorization: Bearer \${AETHERIX_WORKER_TOKEN}\" >> /var/log/aetherix-rss.log 2>&1"
+
+  # Puku — runs TechNewsAgent against whatever the ingest left behind.
+  PUKU_CRON_LINE="${SCHEDULER_CRON} set -a; . /opt/aetherix/.env; set +a; /usr/local/bin/puku >> /var/log/aetherix-puku.log 2>&1"
+
+  ( crontab -l 2>/dev/null \
+      | grep -v '/internal/ingest-all' \
+      | grep -v '/usr/local/bin/puku' ; \
+    echo "${RSS_CRON_LINE}" ; \
+    echo "${PUKU_CRON_LINE}" \
+  ) | crontab -
+
+  sudo touch /var/log/aetherix-rss.log /var/log/aetherix-puku.log
+  sudo chown "$USER":"$USER" /var/log/aetherix-rss.log /var/log/aetherix-puku.log
+  ok "Cron installed:"
+  ok "  RSS   → ${RSS_CRON_LINE}"
+  ok "  Puku  → ${PUKU_CRON_LINE}"
 }
 
 # ---------- 8. firewall + summary ----------
@@ -231,20 +259,26 @@ summary() {
 
   ${BOLD}What was installed${NC}
   • Docker + Compose plugin
-  • Puku CLI stub on host (replace with real Puku when available)
+  • Puku Python worker at /usr/local/bin/puku (drives MCP loop)
   • FVM + latest stable Flutter
   • Repo cloned to ${INSTALL_DIR}
   • .env generated with random secrets (edit before going live)
   • Containers: postgres, backend, cloudflared
-  • Cron: ${SCHEDULER_CRON} → puku run
+  • Cron (every 15 min):
+      - POST /internal/ingest-all (RSS → DB)
+      - /usr/local/bin/puku (DB → summarized articles)
+  • PostgreSQL: first boot seeds default_sources.json
 
   ${BOLD}Next steps${NC}
   1. ssh ${USER}@<vps>  →  cd ${INSTALL_DIR}
-  2. Edit .env and set CLOUDFLARE_TUNNEL_TOKEN + DOMAIN.
+  2. Edit .env and set CLOUDFLARE_TUNNEL_TOKEN + DOMAIN (+ OPENAI_API_KEY).
   3. sudo docker compose up -d --build cloudflared
   4. Verify backend:  curl -s http://127.0.0.1:8000/api/v1/health
-  5. Watch logs:      sudo docker compose logs -f backend
-  6. Puku logs:       tail -f /var/log/aetherix-puku.log
+  5. Trigger a manual RSS run:
+       curl -X POST http://127.0.0.1:8000/internal/ingest-all \\
+         -H "Authorization: Bearer \$(grep PUKU_WORKER_TOKEN .env | cut -d= -f2)"
+  6. Then run Puku once: /usr/local/bin/puku
+  7. Watch logs: sudo docker compose logs -f backend ; tail -f /var/log/aetherix-*.log
 
   ${BOLD}Flutter on the VPS${NC}
   fvm use stable

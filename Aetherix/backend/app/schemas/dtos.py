@@ -90,13 +90,14 @@ class BookmarkIn(BaseModel):
 class BookmarkOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    user_id: int
     article_id: int
     created_at: datetime
 
 
 # -------- auth (Flutter devices) --------
 class DeviceRegisterIn(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=80)
     platform: Literal["android", "windows", "ios", "web", "linux", "macos"]
 
 
@@ -104,3 +105,18 @@ class DeviceRegisterOut(BaseModel):
     user_id: int
     access_token: str
     expires_in_minutes: int
+
+
+# -------- search --------
+class SearchOut(BaseModel):
+    """Search result row — same shape as list news."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    canonical_url: HttpUrl
+    source_id: int
+    importance_score: float | None
+    processing_status: str
+    published_at: datetime | None
+    discovered_at: datetime

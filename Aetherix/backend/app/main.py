@@ -7,11 +7,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.internal import router as internal_router
 from app.api.routes import router as api_router
 from app.core.config import get_settings
-from app.core.database import Base, engine
+from app.core.database import AsyncSessionLocal, Base, engine
 from app.core.logging import configure_logging, get_logger
 from app.mcp.server import router as mcp_router
+from app.services import seed_service
 
 configure_logging(get_settings().log_level)
 logger = get_logger("aetherix.backend")
@@ -29,6 +31,16 @@ async def lifespan(app: FastAPI):
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+            # First-boot seed: import default_sources.json if the
+            # sources table is empty.
+            try:
+                async with AsyncSessionLocal() as s:
+                    inserted = await seed_service.seed_default_sources(s)
+                    await s.commit()
+                if inserted:
+                    logger.info("aetherix_seeded_sources", count=inserted)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("aetherix_seed_failed", error=str(exc))
             logger.info("aetherix_backend_ready_db_ok")
         except Exception as exc:  # noqa: BLE001
             logger.warning("aetherix_backend_ready_no_db", error=str(exc))
@@ -56,6 +68,7 @@ app.add_middleware(
 
 app.include_router(api_router)
 app.include_router(mcp_router)
+app.include_router(internal_router)
 
 
 @app.get("/", include_in_schema=False)

@@ -33,17 +33,53 @@ class ArticleSummary {
       );
 }
 
-class Category {
-  final int id;
-  final String name;
-  final String? description;
+class ArticleDetail extends ArticleSummary {
+  final String? author;
+  final String? summary;
+  final String? whatHappened;
+  final String? whyItMatters;
+  final List<Category> categories;
+  final NewsSource? source;
 
-  Category({required this.id, required this.name, this.description});
+  ArticleDetail({
+    required super.id,
+    required super.title,
+    required super.canonicalUrl,
+    required super.sourceId,
+    required super.importanceScore,
+    required super.processingStatus,
+    required super.publishedAt,
+    required super.discoveredAt,
+    this.author,
+    this.summary,
+    this.whatHappened,
+    this.whyItMatters,
+    this.categories = const [],
+    this.source,
+  });
 
-  factory Category.fromJson(Map<String, dynamic> j) => Category(
+  factory ArticleDetail.fromJson(Map<String, dynamic> j) => ArticleDetail(
         id: j['id'] as int,
-        name: j['name'] as String,
-        description: j['description'] as String?,
+        title: j['title'] as String,
+        canonicalUrl: j['canonical_url'] as String,
+        sourceId: j['source_id'] as int,
+        importanceScore: (j['importance_score'] as num?)?.toDouble(),
+        processingStatus: j['processing_status'] as String,
+        publishedAt: j['published_at'] != null
+            ? DateTime.parse(j['published_at'] as String)
+            : null,
+        discoveredAt: DateTime.parse(j['discovered_at'] as String),
+        author: j['author'] as String?,
+        summary: j['summary'] as String?,
+        whatHappened: j['what_happened'] as String?,
+        whyItMatters: j['why_it_matters'] as String?,
+        categories: (j['categories'] as List<dynamic>? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(Category.fromJson)
+            .toList(),
+        source: j['source'] == null
+            ? null
+            : NewsSource.fromJson(j['source'] as Map<String, dynamic>),
       );
 }
 
@@ -71,5 +107,40 @@ class NewsSource {
         type: j['type'] as String,
         enabled: j['enabled'] as bool,
         category: j['category'] as String?,
+      );
+}
+
+class Category {
+  final int id;
+  final String name;
+  final String? description;
+
+  Category({required this.id, required this.name, this.description});
+
+  factory Category.fromJson(Map<String, dynamic> j) => Category(
+        id: j['id'] as int,
+        name: j['name'] as String,
+        description: j['description'] as String?,
+      );
+}
+
+class Bookmark {
+  final int id;
+  final int userId;
+  final int articleId;
+  final DateTime createdAt;
+
+  Bookmark({
+    required this.id,
+    required this.userId,
+    required this.articleId,
+    required this.createdAt,
+  });
+
+  factory Bookmark.fromJson(Map<String, dynamic> j) => Bookmark(
+        id: j['id'] as int,
+        userId: j['user_id'] as int,
+        articleId: j['article_id'] as int,
+        createdAt: DateTime.parse(j['created_at'] as String),
       );
 }

@@ -38,6 +38,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_MINUTES: ${JWT_EXPIRES_MINUTES}
       PUKU_WORKER_TOKEN: ${PUKU_WORKER_TOKEN}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL}
     ports:
       # cloudflared reaches the backend on 8000 INSIDE the docker network.

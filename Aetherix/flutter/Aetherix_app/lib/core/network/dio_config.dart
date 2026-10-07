@@ -1,5 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../auth/token_store.dart';
 
 /// Reads the API base URL from a dart-define injected at build time.
 /// On the VPS we build with:
@@ -12,8 +15,18 @@ final apiBaseUrlProvider = Provider<String>((ref) {
   return fromDefine;
 });
 
+/// SharedPreferences singleton initialised on app start.
+final sharedPrefsProvider = Provider<SharedPreferences>((ref) {
+  throw UnimplementedError('Override in ProviderScope.overrides');
+});
+
+final tokenStoreProvider = Provider<TokenStore>((ref) {
+  return TokenStore(ref.watch(sharedPrefsProvider));
+});
+
 final dioProvider = Provider<Dio>((ref) {
   final base = ref.watch(apiBaseUrlProvider);
+  final tokenStore = ref.watch(tokenStoreProvider);
   final dio = Dio(
     BaseOptions(
       baseUrl: base,
@@ -23,11 +36,17 @@ final dioProvider = Provider<Dio>((ref) {
     ),
   );
 
-  // Bearer token is added by an interceptor that reads from secure storage.
+  // Bearer token is added by an interceptor that reads from TokenStore.
   dio.interceptors.add(
     InterceptorsWrapper(
-      onRequest: (options, handler) {
-        // TODO: load token from flutter_secure_storage once added.
+      onRequest: (options, handler) async {
+        // Don't attach a token to the register-device endpoint itself.
+        if (!options.path.endsWith('/auth/register-device')) {
+          final token = await tokenStore.read();
+          if (token != null && token.isNotEmpty) {
+            options.headers['Authorization'] = 'Bearer $token';
+          }
+        }
         handler.next(options);
       },
     ),

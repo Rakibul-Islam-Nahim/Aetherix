@@ -135,13 +135,40 @@ async def mark_processed(session: AsyncSession, canonical_url: str) -> None:
 
 
 # -------- bookmarks --------
-async def add_bookmark(session: AsyncSession, article_id: int) -> Bookmark:
-    bookmark = Bookmark(article_id=article_id)
+async def add_bookmark(
+    session: AsyncSession, *, user_id: int, article_id: int
+) -> Bookmark:
+    # idempotent — if (user, article) already exists, return the existing row
+    stmt = select(Bookmark).where(
+        Bookmark.user_id == user_id, Bookmark.article_id == article_id
+    )
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    bookmark = Bookmark(user_id=user_id, article_id=article_id)
     session.add(bookmark)
     await session.flush()
     return bookmark
 
 
-async def list_bookmarks(session: AsyncSession) -> Sequence[Bookmark]:
-    stmt = select(Bookmark).order_by(Bookmark.created_at.desc())
+async def list_bookmarks_for_user(session: AsyncSession, user_id: int) -> Sequence[Bookmark]:
+    stmt = (
+        select(Bookmark)
+        .where(Bookmark.user_id == user_id)
+        .order_by(Bookmark.created_at.desc())
+    )
     return (await session.execute(stmt)).scalars().all()
+
+
+async def delete_bookmark(
+    session: AsyncSession, *, user_id: int, article_id: int
+) -> bool:
+    stmt = select(Bookmark).where(
+        Bookmark.user_id == user_id, Bookmark.article_id == article_id
+    )
+    bookmark = (await session.execute(stmt)).scalar_one_or_none()
+    if bookmark is None:
+        return False
+    await session.delete(bookmark)
+    await session.flush()
+    return True
