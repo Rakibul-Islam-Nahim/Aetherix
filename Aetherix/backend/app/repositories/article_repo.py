@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -116,12 +116,23 @@ async def upsert_processed_article(
     article.published_at = published_at or article.published_at
     article.processing_status = ProcessingStatus.PROCESSED.value
 
-    # categories
+    # categories — rewrite the secondary table directly. Assigning to
+    # `article.categories` in SQLAlchemy 2.0 async triggers implicit
+    # lazy-load I/O that fires outside the greenlet.
     resolved: list[Category] = []
     for name in categories:
         cat = await get_or_create_category(session, name)
         resolved.append(cat)
-    article.categories = resolved
+
+    await session.execute(
+        delete(ArticleCategory).where(ArticleCategory.article_id == article.id)
+    )
+    for cat in resolved:
+        await session.execute(
+            insert(ArticleCategory).values(
+                article_id=article.id, category_id=cat.id
+            )
+        )
 
     await session.flush()
     return article, created

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.orm import Source
 
 
-_SEEDS_PATH = pathlib.Path(__file__).resolve().parents[3] / "database" / "seeds" / "default_sources.json"
+_SEEDS_PATH = pathlib.Path(__file__).resolve().parents[2] / "database" / "seeds" / "default_sources.json"
 
 
 async def seed_default_sources(session: AsyncSession) -> int:

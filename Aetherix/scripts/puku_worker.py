@@ -16,9 +16,12 @@ Configuration is read from environment variables:
     AETHERIX_BACKEND_URL   default: http://127.0.0.1:8000
     AETHERIX_WORKER_TOKEN  default: <required, no default>
     OPENAI_API_KEY         default: <required for summarization>
+    OPENAI_BASE_URL        default: https://api.openai.com/v1
+    OPENAI_MODEL           default: gpt-4o-mini
 
-The summarization step is intentionally simple — a single prompt to
-gpt-4o-mini. Replace `summarize()` with whatever model you prefer.
+The summarization step calls any OpenAI-compatible /chat/completions
+endpoint, so Groq, OpenRouter, OpenAI, etc. all work by setting
+OPENAI_BASE_URL + OPENAI_MODEL.
 """
 from __future__ import annotations
 
@@ -107,26 +110,40 @@ def summarize(title: str, body: str, source_name: str) -> dict[str, Any]:
     user = f"Source: {source_name}\nTitle: {title}\n\nBody:\n{body}"
 
     try:
+        base = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+        payload = {
+            "model": model,
+            "temperature": 0.2,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        # response_format is OpenAI-specific; some providers (Groq, etc.)
+        # accept it, others don't. Enable only for the OpenAI host.
+        if base.startswith("https://api.openai.com/"):
+            payload["response_format"] = {"type": "json_object"}
+
         r = httpx.post(
-            "https://api.openai.com/v1/chat/completions",
+            f"{base}/chat/completions",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": "gpt-4o-mini",
-                "temperature": 0.2,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
+            json=payload,
             timeout=60.0,
         )
         r.raise_for_status()
         content = r.json()["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            # Some providers wrap JSON in ```json fences despite instructions.
+            stripped = content.strip()
+            if stripped.startswith("```"):
+                stripped = re.sub(r"^```(?:json)?", "", stripped).rstrip("`").strip()
+            parsed = json.loads(stripped)
         return {
             "summary": parsed.get("summary", ""),
             "what_happened": parsed.get("what_happened", ""),
@@ -177,7 +194,7 @@ def run(token: str, base: str, dry_run: bool) -> int:
     found = len(pending)
     processed = 0
     failed = 0
-    for art in pending:
+    for idx, art in enumerate(pending):
         canonical_url = art["canonical_url"]
         title = art.get("title", "(untitled)")
         source_name = art.get("source_name", "unknown")
@@ -204,6 +221,11 @@ def run(token: str, base: str, dry_run: bool) -> int:
         except Exception as exc:  # noqa: BLE001
             failed += 1
             log(f"article failed: {canonical_url}: {exc.__class__.__name__}: {exc}")
+
+        # Rate-limit politeness for free LLM tiers (Groq etc.)
+        # The default sleep keeps us under ~12 req/min per run.
+        if not dry_run and idx < len(pending) - 1:
+            time.sleep(float(os.environ.get("PUKU_INTER_ARTICLE_SLEEP", "5")))
 
     _report(token, base, started_at, found, processed, failed, None)
     log(f"done found={found} processed={processed} failed={failed}")
@@ -237,11 +259,15 @@ def _report(
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--base", default=os.environ.get("AETHERIX_BACKEND_URL", DEFAULT_BACKEND))
-    p.add_argument("--token", default=os.environ.get("AETHERIX_WORKER_TOKEN"))
+    p.add_argument(
+        "--token",
+        default=os.environ.get("AETHERIX_WORKER_TOKEN")
+        or os.environ.get("PUKU_WORKER_TOKEN"),
+    )
     p.add_argument("--dry-run", action="store_true")
     args = p.parse_args()
     if not args.token:
-        log("AETHERIX_WORKER_TOKEN is required")
+        log("AETHERIX_WORKER_TOKEN (or PUKU_WORKER_TOKEN) is required")
         return 2
     return run(args.token, args.base, args.dry_run)
 

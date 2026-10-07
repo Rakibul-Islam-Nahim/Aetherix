@@ -124,13 +124,12 @@ async def get_article(
 async def search(
     q: str = Query(min_length=1, max_length=200),
     limit: int = Query(50, ge=1, le=200),
-    session: DBSession = DBSession.__class__,  # type: ignore[assignment]
+    session: DBSession = None,  # type: ignore[assignment]
     _user: dict = Depends(require_user),
 ) -> list[SearchOut]:
     """ILIKE search across title, summary, what_happened, why_it_matters,
     plus category.name and source.name."""
     like = f"%{q}%"
-    cat_ids_sub = select(ArticleCategory.category_id)
     stmt = (
         select(Article)
         .outerjoin(ArticleCategory, ArticleCategory.article_id == Article.id)
@@ -151,7 +150,6 @@ async def search(
         .limit(limit)
         .distinct()
     )
-    del cat_ids_sub  # silence "unused" — kept above for readability
     rows = (await session.execute(stmt)).scalars().all()
     return [SearchOut.model_validate(r) for r in rows]
 
