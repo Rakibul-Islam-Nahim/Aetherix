@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../models/article.dart';
@@ -19,14 +20,18 @@ final _feedNewsProvider =
     FutureProvider.autoDispose.family<List<ArticleSummary>, FilterCriteria>(
   (ref, criteria) async {
     final filter = NewsListFilter(tag: criteria.tag, limit: 100);
-    final rows = await ref.watch(newsServiceProvider).list(filter: filter);
-    return rows;
+    return ref.watch(newsServiceProvider).list(filter: filter);
   },
 );
 
-/// Filter-driven intelligence feed. Server-side ``tag`` is sent to the
-/// backend; importance tier / keyword are applied client-side because
-/// the backend's relevance search is broader than the spec demands.
+/// Filter-driven intelligence feed with a collapsing app bar.
+///
+/// The top bar holds:
+///   - left:    ``DASHBOARD`` heading + status dot
+///   - right:   ``LAST UPDATED HH:MM:SS`` live stamp
+///   - middle:  Critical / High / Medium / Low stat tiles
+///
+/// On scroll the bar collapses — only the search bar remains sticky.
 class FeedPage extends ConsumerWidget {
   const FeedPage({super.key});
 
@@ -45,83 +50,271 @@ class FeedPage extends ConsumerWidget {
             style: const TextStyle(color: AppColors.critical),
           ),
         ),
-        data: (articles) {
-          final filtered = articles.where((a) {
-            if (criteria.minImportance > 0 &&
-                (a.importanceScore ?? 0) < criteria.minImportance) {
-              return false;
-            }
-            if (criteria.tier != null &&
-                ImportanceTier.fromScore(a.importanceScore) != criteria.tier) {
-              return false;
-            }
-            if (criteria.keyword.trim().isNotEmpty) {
-              final q = criteria.keyword.toLowerCase();
-              if (!a.title.toLowerCase().contains(q)) return false;
-            }
-            return true;
-          }).toList();
-
-          return Column(
-            children: [
-              _FeedHeader(count: filtered.length, total: articles.length),
-              FilterBar(
-                criteria: criteria,
-                onChanged: (c) =>
-                    ref.read(_feedFilterProvider.notifier).state = c,
-              ),
-              Expanded(
-                child: ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md,
-                    AppSpacing.md,
-                    AppSpacing.md,
-                    AppSpacing.xl,
-                  ),
-                  itemCount: filtered.length,
-                  separatorBuilder: (_, __) =>
-                      const SizedBox(height: AppSpacing.sm),
-                  itemBuilder: (context, i) =>
-                      ArticleCard(article: filtered[i]),
-                ),
-              ),
-            ],
-          );
-        },
+        data: (articles) => _FeedBody(articles: articles, criteria: criteria),
       ),
     );
   }
 }
 
-class _FeedHeader extends StatelessWidget {
-  const _FeedHeader({required this.count, required this.total});
-  final int count;
-  final int total;
+class _FeedBody extends ConsumerStatefulWidget {
+  const _FeedBody({required this.articles, required this.criteria});
+  final List<ArticleSummary> articles;
+  final FilterCriteria criteria;
+
+  @override
+  ConsumerState<_FeedBody> createState() => _FeedBodyState();
+}
+
+class _FeedBodyState extends ConsumerState<_FeedBody> {
+  // 0 = expanded (full hero), 1 = fully collapsed.
+  double _collapse = 0;
+  late final ValueNotifier<int> _lastUpdatedTick;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastUpdatedTick = ValueNotifier<int>(DateTime.now().millisecondsSinceEpoch);
+    // Tick the timestamp once per second so it visibly updates.
+    Future<void>.delayed(const Duration(seconds: 1), _tick);
+  }
+
+  void _tick() {
+    if (!mounted) return;
+    _lastUpdatedTick.value = DateTime.now().millisecondsSinceEpoch;
+    Future<void>.delayed(const Duration(seconds: 1), _tick);
+  }
+
+  @override
+  void dispose() {
+    _lastUpdatedTick.dispose();
+    super.dispose();
+  }
+
+  void _onScroll(double offset, double maxCollapseOffset) {
+    final c = (offset / maxCollapseOffset).clamp(0.0, 1.0);
+    if ((c - _collapse).abs() > 0.01) {
+      setState(() => _collapse = c);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Apply filter to articles list.
+    final all = widget.articles;
+    final filtered = all.where((a) {
+      if (widget.criteria.minImportance > 0 &&
+          (a.importanceScore ?? 0) < widget.criteria.minImportance) {
+        return false;
+      }
+      if (widget.criteria.tier != null &&
+          ImportanceTier.fromScore(a.importanceScore) != widget.criteria.tier) {
+        return false;
+      }
+      if (widget.criteria.keyword.trim().isNotEmpty) {
+        final q = widget.criteria.keyword.toLowerCase();
+        if (!a.title.toLowerCase().contains(q)) return false;
+      }
+      return true;
+    }).toList();
+
+    // Tally counts per tier on the filtered list.
+    final stats = <ImportanceTier, int>{
+      ImportanceTier.critical: 0,
+      ImportanceTier.high: 0,
+      ImportanceTier.medium: 0,
+      ImportanceTier.low: 0,
+    };
+    for (final a in filtered) {
+      stats[ImportanceTier.fromScore(a.importanceScore)] =
+          (stats[ImportanceTier.fromScore(a.importanceScore)] ?? 0) + 1;
+    }
+    final visible = filtered.length;
+    final total = all.length;
+
+    // 160 px of content scrolls away before the search bar takes over.
+    const headerHeight = 160.0;
+
+    return Stack(
+      children: [
+        // List sits underneath; the app bar floats on top.
+        // We push the first item below the bar by `headerHeight` so the
+        // bar doesn't cover the first row.
+        Positioned.fill(
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (n) {
+              if (n is ScrollUpdateNotification) {
+                _onScroll(n.metrics.pixels, headerHeight);
+              }
+              return false;
+            },
+            child: CustomScrollView(
+              slivers: [
+                // Reserve room for the floating bar.
+                SliverToBoxAdapter(
+                  child: SizedBox(height: headerHeight + AppSpacing.sm),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.only(
+                    left: AppSpacing.md,
+                    right: AppSpacing.md,
+                    top: AppSpacing.xs,
+                    bottom: AppSpacing.xl,
+                  ),
+                  sliver: SliverList.separated(
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: AppSpacing.sm),
+                    itemBuilder: (_, i) => ArticleCard(article: filtered[i]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // The collapsing app bar floats at the top.
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: _CollapsingAppBar(
+            collapse: _collapse,
+            headerHeight: headerHeight,
+            stats: stats,
+            visible: visible,
+            total: total,
+            lastUpdatedTick: _lastUpdatedTick,
+            child: FilterBar(
+              criteria: widget.criteria,
+              onChanged: (c) =>
+                  ref.read(_feedFilterProvider.notifier).state = c,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CollapsingAppBar extends StatelessWidget {
+  const _CollapsingAppBar({
+    required this.collapse,
+    required this.headerHeight,
+    required this.stats,
+    required this.visible,
+    required this.total,
+    required this.lastUpdatedTick,
+    required this.child,
+  });
+
+  final double collapse;
+  final double headerHeight;
+  final Map<ImportanceTier, int> stats;
+  final int visible;
+  final int total;
+  final ValueNotifier<int> lastUpdatedTick;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    // Hero content fades out as we collapse. The FilterBar stays.
+    final heroOpacity = (1 - collapse * 1.4).clamp(0.0, 1.0);
+    final heroHeight = headerHeight * (1 - collapse);
     return Container(
+      color: AppColors.bgSecondary,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // When the hero is fully collapsed, hide it entirely so the
+          // inner Column doesn't try to lay out inside a ~0-px slot and
+          // overflow. During the partial-collapse range we keep it
+          // visible so the fade-out animates smoothly.
+          Visibility(
+            visible: heroHeight > 1,
+            maintainState: true,
+            child: SizedBox(
+              width: double.infinity,
+              height: heroHeight,
+              child: ClipRect(
+                child: Opacity(
+                  opacity: heroOpacity,
+                  child: IgnorePointer(
+                    ignoring: collapse > 0.5,
+                    child: OverflowBox(
+                      alignment: Alignment.topCenter,
+                      maxHeight: double.infinity,
+                      child: _HeroContent(
+                        stats: stats,
+                        visible: visible,
+                        total: total,
+                        lastUpdatedTick: lastUpdatedTick,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          // Always visible - the search/filter bar.
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroContent extends StatelessWidget {
+  const _HeroContent({
+    required this.stats,
+    required this.visible,
+    required this.total,
+    required this.lastUpdatedTick,
+  });
+
+  final Map<ImportanceTier, int> stats;
+  final int visible;
+  final int total;
+  final ValueNotifier<int> lastUpdatedTick;
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = DateFormat('HH:mm:ss');
+    return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
-        AppSpacing.lg,
         AppSpacing.md,
         AppSpacing.md,
+        AppSpacing.sm,
       ),
-      decoration: const BoxDecoration(
-        color: AppColors.bgSecondary,
-        border: Border(
-          bottom: BorderSide(color: AppColors.border, width: 1),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
-              StatusDot('INTELLIGENCE FEED'),
-              SizedBox(height: AppSpacing.xs),
-              Text(
+          Row(
+            children: [
+              const StatusDot('INTELLIGENCE FEED'),
+              const Spacer(),
+              Icon(Icons.schedule,
+                  size: 11, color: AppColors.textMuted),
+              const SizedBox(width: 4),
+              ValueListenableBuilder<int>(
+                valueListenable: lastUpdatedTick,
+                builder: (_, __, ___) => MonoText(
+                  'LAST UPDATED ${fmt.format(DateTime.now())}',
+                  color: AppColors.textMuted,
+                  size: 10,
+                  letterSpacing: 1.0,
+                  weight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Text(
                 'FEED',
                 style: TextStyle(
                   fontSize: 22,
@@ -129,23 +322,88 @@ class _FeedHeader extends StatelessWidget {
                   letterSpacing: 4,
                 ),
               ),
-              SizedBox(height: 2),
-              Text(
-                'See everything. Understand what matters.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textMuted,
-                ),
+              const Spacer(),
+              MonoText(
+                '$visible / $total ARTICLES',
+                color: AppColors.lime,
+                size: 11,
+                letterSpacing: 1.0,
+                weight: FontWeight.w700,
               ),
             ],
           ),
-          const Spacer(),
-          MonoText(
-            '$count / $total ARTICLES',
-            color: AppColors.lime,
-            size: 11,
-            letterSpacing: 1.0,
-            weight: FontWeight.w700,
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              for (final t in const [
+                ImportanceTier.critical,
+                ImportanceTier.high,
+                ImportanceTier.medium,
+                ImportanceTier.low,
+              ])
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      right: t == ImportanceTier.low ? 0 : AppSpacing.xs,
+                    ),
+                    child: _StatTile(
+                      label: t.label,
+                      value: stats[t] ?? 0,
+                      color: t.color,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  const _StatTile({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+  final String label;
+  final int value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: AppSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(AppRadii.small),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: [
+          Text(
+            '$value',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: color,
+              height: 1,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          Expanded(
+            child: MonoText(
+              label,
+              color: AppColors.textMuted,
+              size: 9,
+              letterSpacing: 1.0,
+            ),
           ),
         ],
       ),
