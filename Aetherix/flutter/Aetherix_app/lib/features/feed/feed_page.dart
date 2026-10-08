@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_theme.dart';
+import '../../models/article.dart';
 import '../../services/news_service.dart';
 import '../../widgets/article_card.dart';
 import '../../widgets/filter_bar.dart';
@@ -14,10 +15,12 @@ final _feedFilterProvider = StateProvider<FilterCriteria>(
 /// ``NewsListFilter`` only when the criteria change. Keyed on the
 /// criteria instance so Riverpod caches it per filter — prevents the
 /// per-frame refire loop that left the page stuck on LOADING FEED.
-final _feedNewsProvider = FutureProvider.family<List<ArticleSummary>, FilterCriteria>(
+final _feedNewsProvider =
+    FutureProvider.autoDispose.family<List<ArticleSummary>, FilterCriteria>(
   (ref, criteria) async {
     final filter = NewsListFilter(tag: criteria.tag, limit: 100);
-    return ref.watch(latestNewsProvider(filter).future);
+    final rows = await ref.watch(newsServiceProvider).list(filter: filter);
+    return rows;
   },
 );
 
@@ -37,7 +40,10 @@ class FeedPage extends ConsumerWidget {
       body: newsAsync.when(
         loading: () => const Center(child: StatusDot('LOADING FEED')),
         error: (e, _) => Center(
-          child: Text('$e', style: const TextStyle(color: AppColors.critical)),
+          child: Text(
+            '$e',
+            style: const TextStyle(color: AppColors.critical),
+          ),
         ),
         data: (articles) {
           final filtered = articles.where((a) {

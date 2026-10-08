@@ -78,25 +78,28 @@ class ArchivePage extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _ArchiveHeader(),
-          _CalendarPane(
-            visible: visible,
-            selected: selected,
-            countsAsync: counts,
-            onSelect: (d) {
-              ref.read(_selectedDayProvider.notifier).state = DateTime(
-                d.year,
-                d.month,
-                d.day,
-              );
-            },
-            onPrev: () {
-              ref.read(_visibleMonthProvider.notifier).state =
-                  DateTime(visible.year, visible.month - 1, 1);
-            },
-            onNext: () {
-              ref.read(_visibleMonthProvider.notifier).state =
-                  DateTime(visible.year, visible.month + 1, 1);
-            },
+          Flexible(
+            fit: FlexFit.loose,
+            child: _CalendarPane(
+              visible: visible,
+              selected: selected,
+              countsAsync: counts,
+              onSelect: (d) {
+                ref.read(_selectedDayProvider.notifier).state = DateTime(
+                  d.year,
+                  d.month,
+                  d.day,
+                );
+              },
+              onPrev: () {
+                ref.read(_visibleMonthProvider.notifier).state =
+                    DateTime(visible.year, visible.month - 1, 1);
+              },
+              onNext: () {
+                ref.read(_visibleMonthProvider.notifier).state =
+                    DateTime(visible.year, visible.month + 1, 1);
+              },
+            ),
           ),
           const Divider(height: 1, color: AppColors.border),
           Expanded(
@@ -179,15 +182,16 @@ class _CalendarPane extends StatelessWidget {
     final leadingBlanks = firstWeekday - 1;
     final daysInMonth = DateTime(visible.year, visible.month + 1, 0).day;
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        AppSpacing.md,
-        AppSpacing.md,
-        AppSpacing.sm,
-      ),
+    return ColoredBox(
       color: AppColors.bgPrimary,
-      child: Column(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.md,
+          AppSpacing.md,
+          AppSpacing.sm,
+        ),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
@@ -253,6 +257,7 @@ class _CalendarPane extends StatelessWidget {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -302,7 +307,7 @@ class _Grid extends StatelessWidget {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       crossAxisCount: 7,
-      childAspectRatio: 1.05,
+      childAspectRatio: 1.0,
       children: children,
     );
   }

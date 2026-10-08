@@ -56,6 +56,19 @@ class FilterCriteria {
 
   bool get isEmpty =>
       keyword.isEmpty && tag == null && minImportance == 0 && tier == null;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is FilterCriteria &&
+        other.keyword == keyword &&
+        other.tag == tag &&
+        other.minImportance == minImportance &&
+        other.tier == tier;
+  }
+
+  @override
+  int get hashCode => Object.hash(keyword, tag, minImportance, tier);
 }
 
 class FilterBar extends StatefulWidget {
