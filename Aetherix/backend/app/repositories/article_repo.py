@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Sequence
 
-from sqlalchemy import delete, insert, select
+from sqlalchemy import and_, delete, func, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -53,24 +53,62 @@ async def find_by_canonical(session: AsyncSession, canonical_url: str) -> Articl
 
 
 async def list_recent_articles(
-    session: AsyncSession, *, limit: int = 50, offset: int = 0
+    session: AsyncSession,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ) -> Sequence[Article]:
+    """Return processed articles.
+
+    When ``date_from`` / ``date_to`` are provided, the filter is applied to
+    ``published_at`` if set, else to ``discovered_at`` (the canonical
+    ingestion timestamp). Either bound may be None for open-ended ranges.
+    """
+    conditions = [
+        Article.processing_status == ProcessingStatus.PROCESSED.value,
+    ]
+    if date_from is not None or date_to is not None:
+        bounds = []
+        if date_from is not None:
+            bounds.append(
+                func.coalesce(Article.published_at, Article.discovered_at)
+                >= date_from
+            )
+        if date_to is not None:
+            bounds.append(
+                func.coalesce(Article.published_at, Article.discovered_at) <= date_to
+            )
+        conditions.append(and_(*bounds))
+
     stmt = (
         select(Article)
-        .where(Article.processing_status == ProcessingStatus.PROCESSED.value)
-        .order_by(Article.published_at.desc().nulls_last(), Article.discovered_at.desc())
+        .where(*conditions)
+        .order_by(
+            Article.published_at.desc().nulls_last(),
+            Article.discovered_at.desc(),
+        )
         .limit(limit)
         .offset(offset)
-        .options(selectinload(Article.source))
+        .options(
+            selectinload(Article.source),
+            selectinload(Article.categories),
+        )
     )
     return (await session.execute(stmt)).scalars().all()
 
 
-async def get_article_with_relations(session: AsyncSession, article_id: int) -> Article | None:
+async def get_article_with_relations(
+    session: AsyncSession, article_id: int
+) -> Article | None:
     stmt = (
         select(Article)
         .where(Article.id == article_id)
-        .options(selectinload(Article.categories), selectinload(Article.source))
+        .options(
+            selectinload(Article.categories),
+            selectinload(Article.source),
+        )
     )
     return (await session.execute(stmt)).scalar_one_or_none()
 
@@ -116,7 +154,7 @@ async def upsert_processed_article(
     article.published_at = published_at or article.published_at
     article.processing_status = ProcessingStatus.PROCESSED.value
 
-    # categories — rewrite the secondary table directly. Assigning to
+    # categories - rewrite the secondary table directly. Assigning to
     # `article.categories` in SQLAlchemy 2.0 async triggers implicit
     # lazy-load I/O that fires outside the greenlet.
     resolved: list[Category] = []
@@ -149,7 +187,7 @@ async def mark_processed(session: AsyncSession, canonical_url: str) -> None:
 async def add_bookmark(
     session: AsyncSession, *, user_id: int, article_id: int
 ) -> Bookmark:
-    # idempotent — if (user, article) already exists, return the existing row
+    # idempotent - if (user, article) already exists, return the existing row
     stmt = select(Bookmark).where(
         Bookmark.user_id == user_id, Bookmark.article_id == article_id
     )
@@ -162,7 +200,9 @@ async def add_bookmark(
     return bookmark
 
 
-async def list_bookmarks_for_user(session: AsyncSession, user_id: int) -> Sequence[Bookmark]:
+async def list_bookmarks_for_user(
+    session: AsyncSession, user_id: int
+) -> Sequence[Bookmark]:
     stmt = (
         select(Bookmark)
         .where(Bookmark.user_id == user_id)

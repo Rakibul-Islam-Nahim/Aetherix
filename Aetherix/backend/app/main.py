@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.api.internal import router as internal_router
 from app.api.routes import router as api_router
@@ -22,17 +23,11 @@ logger = get_logger("aetherix.backend")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("aetherix_backend_starting")
-    # Create tables on boot (Phase 1). Alembic takes over in Phase 2.
-    # We tolerate DB-unreachable so that local smoke testing works
-    # without postgres. In Docker, AETHERIX_SKIP_BOOTSTRAP=0 (default)
-    # and DB is reachable, so tables get created.
     skip = os.environ.get("AETHERIX_SKIP_BOOTSTRAP") == "1"
     if not skip:
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            # First-boot seed: import default_sources.json if the
-            # sources table is empty.
             try:
                 async with AsyncSessionLocal() as s:
                     inserted = await seed_service.seed_default_sources(s)
@@ -66,6 +61,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
+# All API/MCP/internal routes first.
 app.include_router(api_router)
 app.include_router(mcp_router)
 app.include_router(internal_router)
@@ -78,3 +74,13 @@ async def root() -> dict[str, str]:
         "docs": "/docs",
         "health": "/api/v1/health",
     }
+
+
+# Serve the Flutter web build at "/" if /app/static exists.
+# This is mounted LAST so all the routes above win over the static catch-all.
+_STATIC_DIR = os.environ.get("AETHERIX_WEB_STATIC_DIR", "/app/static")
+if os.path.isdir(_STATIC_DIR):
+    app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="web")
+    logger.info("aetherix_web_static_mounted", path=_STATIC_DIR)
+else:
+    logger.info("aetherix_web_static_skipped", path=_STATIC_DIR)

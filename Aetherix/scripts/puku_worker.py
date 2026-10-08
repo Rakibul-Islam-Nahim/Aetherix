@@ -213,6 +213,14 @@ def run(token: str, base: str, dry_run: bool) -> int:
                 "content_hash": content_hash(body or title),
                 "categories": summary["categories"],
             }
+            # Normalize to the 4-tag allowlist before publish so the UI only
+            # ever shows the curated set. Done in-worker to keep the API
+            # contract clean and avoid leaking LLM-fluff tags.
+            try:
+                from app.services.tag_normalize import normalize as _norm
+                payload["categories"] = _norm(payload["categories"])
+            except Exception as norm_exc:  # noqa: BLE001
+                log(f"tag normalize skipped: {norm_exc.__class__.__name__}: {norm_exc}")
             if not dry_run:
                 backend_post("/mcp/publish_article", token, base, payload)
             else:

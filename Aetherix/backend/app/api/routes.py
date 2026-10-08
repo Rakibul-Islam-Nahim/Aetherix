@@ -1,5 +1,7 @@
-"""REST API v1 routes — surfaced to Flutter."""
+"""REST API v1 routes - surfaced to Flutter."""
 from __future__ import annotations
+
+from datetime import datetime, time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import or_, select
@@ -17,6 +19,7 @@ from app.models.orm import (
     User,
 )
 from app.repositories import article_repo
+from app.services import tag_normalize
 from app.schemas.dtos import (
     ArticleDetail,
     ArticleSummary,
@@ -97,12 +100,38 @@ async def register_device(
 async def list_news(
     session: DBSession,
     pagination: PaginationDep,
+    tag: str | None = Query(default=None, max_length=50),
+    date_from: str | None = Query(default=None, alias="from"),
+    date_to: str | None = Query(default=None, alias="to"),
     _user: dict = Depends(require_user),
 ) -> list[ArticleSummary]:
+    """List processed articles.
+
+    Optional filters:
+      - ``tag``          single primary tag from the Aetherix allowlist.
+      - ``from``/``to``  inclusive YYYY-MM-DD range; applied to
+                         ``published_at`` when present, falling back to
+                         ``discovered_at``.
+    """
+    parsed_from = _parse_day(date_from, "from", end_of_day=False)
+    parsed_to = _parse_day(date_to, "to", end_of_day=True)
     rows = await article_repo.list_recent_articles(
-        session, limit=pagination.limit, offset=pagination.offset
+        session,
+        limit=pagination.limit,
+        offset=pagination.offset,
+        date_from=parsed_from,
+        date_to=parsed_to,
     )
-    return [ArticleSummary.model_validate(r) for r in rows]
+    tag_norm = tag_normalize.map_one(tag) if tag else None
+    out: list[ArticleSummary] = []
+    for r in rows:
+        primary = _primary_tag(r)
+        if tag_norm is not None and primary != tag_norm:
+            continue
+        summary = ArticleSummary.model_validate(r)
+        summary.tag = primary
+        out.append(summary)
+    return out
 
 
 @router.get("/news/{article_id}", response_model=ArticleDetail)
@@ -116,7 +145,9 @@ async def get_article(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Article not found"
         )
-    return ArticleDetail.model_validate(article)
+    detail = ArticleDetail.model_validate(article)
+    detail.tag = _primary_tag(article)
+    return detail
 
 
 # ----- search -----
@@ -151,7 +182,12 @@ async def search(
         .distinct()
     )
     rows = (await session.execute(stmt)).scalars().all()
-    return [SearchOut.model_validate(r) for r in rows]
+    out: list[SearchOut] = []
+    for r in rows:
+        s = SearchOut.model_validate(r)
+        s.tag = _primary_tag(r)
+        out.append(s)
+    return out
 
 
 # ----- categories / sources -----
@@ -231,3 +267,25 @@ async def delete_bookmark(
         )
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------- helpers --------
+def _parse_day(raw: str | None, field: str, *, end_of_day: bool):
+    """Parse ``YYYY-MM-DD`` into a tz-aware datetime UTC."""
+    if not raw:
+        return None
+    try:
+        d = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field} must be YYYY-MM-DD",
+        ) from exc
+    if end_of_day:
+        return datetime.combine(d, time.max, tzinfo=timezone.utc)
+    return datetime.combine(d, time.min, tzinfo=timezone.utc)
+
+
+def _primary_tag(article: Article) -> str:
+    cats = [c.name for c in (article.categories or [])]
+    return tag_normalize.primary(cats) if cats else "Technology"

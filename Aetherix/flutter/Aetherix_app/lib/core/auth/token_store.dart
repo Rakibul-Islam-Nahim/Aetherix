@@ -1,6 +1,10 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Persists the JWT issued by /auth/register-device.
+///
+/// Works on Android, iOS, Windows, and Web — uses SharedPreferencesAsync
+/// which has a real web implementation (localStorage). On web the token
+/// therefore survives a page reload.
 class TokenStore {
   TokenStore(this._prefs);
 
@@ -29,8 +33,9 @@ class TokenStore {
     required int userId,
     required int expiresInMinutes,
   }) async {
-    final expiresAt =
-        DateTime.now().add(Duration(minutes: expiresInMinutes)).millisecondsSinceEpoch;
+    final expiresAt = DateTime.now()
+        .add(Duration(minutes: expiresInMinutes))
+        .millisecondsSinceEpoch;
     await _prefs.setString(_key, token);
     await _prefs.setInt(_userKey, userId);
     await _prefs.setInt(_expiresKey, expiresAt);
