@@ -1,3 +1,6 @@
+/// Article models. ``ArticleSummary`` is the list-row shape returned by
+/// ``/api/v1/news`` and ``/search``. ``ArticleDetail`` adds the
+/// full-text fields used on the article page and on expanded cards.
 class ArticleSummary {
   final int id;
   final String title;
@@ -8,6 +11,13 @@ class ArticleSummary {
   final DateTime? publishedAt;
   final DateTime discoveredAt;
 
+  /// Primary allowlisted tag — one of:
+  ///   ``Cyber Security`` | ``Hacking`` | ``AI`` | ``Technology``.
+  /// ``null`` only if the row was published before the tag field existed
+  /// or the backend failed to normalize. The UI renders ``Technology``
+  /// in that case so it never shows a blank.
+  final String? tag;
+
   ArticleSummary({
     required this.id,
     required this.title,
@@ -17,6 +27,7 @@ class ArticleSummary {
     required this.processingStatus,
     required this.publishedAt,
     required this.discoveredAt,
+    this.tag,
   });
 
   factory ArticleSummary.fromJson(Map<String, dynamic> j) => ArticleSummary(
@@ -30,6 +41,7 @@ class ArticleSummary {
             ? DateTime.parse(j['published_at'] as String)
             : null,
         discoveredAt: DateTime.parse(j['discovered_at'] as String),
+        tag: j['tag'] as String?,
       );
 }
 
@@ -50,6 +62,7 @@ class ArticleDetail extends ArticleSummary {
     required super.processingStatus,
     required super.publishedAt,
     required super.discoveredAt,
+    super.tag,
     this.author,
     this.summary,
     this.whatHappened,
@@ -69,6 +82,7 @@ class ArticleDetail extends ArticleSummary {
             ? DateTime.parse(j['published_at'] as String)
             : null,
         discoveredAt: DateTime.parse(j['discovered_at'] as String),
+        tag: j['tag'] as String?,
         author: j['author'] as String?,
         summary: j['summary'] as String?,
         whatHappened: j['what_happened'] as String?,

@@ -1,24 +1,69 @@
+import 'dart:io' show Platform;
+
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../auth/token_store.dart';
 
-/// Reads the API base URL from a dart-define injected at build time.
-/// On the VPS we build with:
-///   flutter build apk --dart-define=AETHERIX_API_BASE_URL=https://...
-final apiBaseUrlProvider = Provider<String>((ref) {
-  const fromDefine = String.fromEnvironment(
-    'AETHERIX_API_BASE_URL',
-    defaultValue: 'http://10.0.2.2:8000/api/v1',
-  );
-  return fromDefine;
-});
+/// Reads the API base URL.
+///
+/// Priority:
+///   1. dart-define `AETHERIX_API_BASE_URL` (set per build)
+///   2. Saved override from the in-app settings screen
+///   3. Platform-aware default (web → localhost, Android → 10.0.2.2, else localhost)
+///
+/// You can change it at runtime via `apiBaseUrlProvider`'s notifier.
+class ApiBaseUrlController extends StateNotifier<String> {
+  ApiBaseUrlController(this._prefs, String initial)
+      : super(initial.isEmpty ? _defaultBaseUrl() : initial);
 
-/// SharedPreferences singleton initialised on app start.
+  final SharedPreferences _prefs;
+  static const _key = 'aetherix.api_base_url';
+
+  Future<void> set(String url) async {
+    state = url;
+    await _prefs.setString(_key, url);
+  }
+
+  String loadSaved() => _prefs.getString(_key) ?? '';
+}
+
+String _defaultBaseUrl() {
+  // Production build for the VPS:
+  //   flutter build web --dart-define=AETHERIX_API_BASE_URL=https://...
+  // For dev:
+  //   web   → http://localhost:8000/api/v1   (run backend on the same host)
+  //   android emulator → http://10.0.2.2:8000/api/v1
+  //   other → http://localhost:8000/api/v1
+  if (kIsWeb) return 'http://localhost:8000/api/v1';
+  try {
+    if (Platform.isAndroid) return 'http://10.0.2.2:8000/api/v1';
+  } catch (_) {
+    // Platform is unavailable on web; fall through.
+  }
+  return 'http://localhost:8000/api/v1';
+}
+
 final sharedPrefsProvider = Provider<SharedPreferences>((ref) {
   throw UnimplementedError('Override in ProviderScope.overrides');
 });
+
+final apiBaseUrlProvider = StateNotifierProvider<ApiBaseUrlController, String>(
+  (ref) {
+    const fromDefine = String.fromEnvironment(
+      'AETHERIX_API_BASE_URL',
+      defaultValue: '',
+    );
+    final prefs = ref.watch(sharedPrefsProvider);
+    final saved = prefs.getString(ApiBaseUrlController._key) ?? '';
+    final initial = fromDefine.isNotEmpty
+        ? fromDefine
+        : (saved.isNotEmpty ? saved : _defaultBaseUrl());
+    return ApiBaseUrlController(prefs, initial);
+  },
+);
 
 final tokenStoreProvider = Provider<TokenStore>((ref) {
   return TokenStore(ref.watch(sharedPrefsProvider));

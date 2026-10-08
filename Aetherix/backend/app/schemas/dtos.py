@@ -50,6 +50,11 @@ class ArticleSummary(BaseModel):
     processing_status: str
     published_at: datetime | None
     discovered_at: datetime
+    # Primary (first) normalized tag from the Aetherix allowlist:
+    # ``Cyber Security``, ``Technology``, ``AI``, ``Hacking``.
+    # Kept flat on the summary so list rows can show it without an
+    # extra fetch.
+    tag: str | None = None
 
 
 class ArticleDetail(ArticleSummary):
@@ -120,3 +125,6 @@ class SearchOut(BaseModel):
     processing_status: str
     published_at: datetime | None
     discovered_at: datetime
+    # Primary normalized tag from the Aetherix allowlist. Same semantics
+    # as ``ArticleSummary.tag``.
+    tag: str | None = None

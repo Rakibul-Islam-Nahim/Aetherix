@@ -21,6 +21,16 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY backend/app ./app
 COPY database ./database
 
+# Optional Flutter web build. If ./backend/static exists at build context,
+# the backend serves it at "/" on the same origin as the API — no CORS.
+# Build BEFORE `docker compose build backend`:
+#   cd flutter/Aetherix_app
+#   fvm flutter build web --release \
+#     --dart-define=AETHERIX_API_BASE_URL=https://news.cybersentinel.top/api/v1
+#   mkdir -p ../../backend/static
+#   cp -r build/web/* ../../backend/static/
+COPY backend/static /app/static
+
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/api/v1/health || exit 1

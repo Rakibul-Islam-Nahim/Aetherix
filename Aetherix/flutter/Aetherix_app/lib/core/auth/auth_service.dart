@@ -40,8 +40,13 @@ final authServiceProvider = Provider<AuthService>((ref) {
 
 /// One-shot bootstrap: ensures the device is registered before the UI
 /// makes any other API call. Calls complete on the first frame.
+///
+/// Uses ``ref.read`` (not ``ref.watch``) for the AuthService so this
+/// provider runs once and does not re-run whenever the AuthService
+/// itself is rebuilt (which used to cause an infinite refetch loop
+/// with the new Riverpod family semantics).
 final authBootstrapProvider = FutureProvider<void>((ref) async {
-  final auth = ref.watch(authServiceProvider);
+  final auth = ref.read(authServiceProvider);
   await auth.ensureToken(
     deviceName: 'nahim-phone',
     devicePlatform: 'android',
