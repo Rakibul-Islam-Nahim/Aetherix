@@ -1,7 +1,7 @@
 name: aetherix_app
 description: "Personal tech-news intelligence client (Android + Windows)."
 publish_to: "none"
-version: 0.1.0+1
+version: 1.1.0+2
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
