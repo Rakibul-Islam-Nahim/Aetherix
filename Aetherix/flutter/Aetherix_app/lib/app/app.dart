@@ -308,15 +308,41 @@ class _Shell extends StatelessWidget {
   Widget build(BuildContext context) {
     final wide = MediaQuery.of(context).size.width >= 720;
 
+    // Mobile shell: a Scaffold whose drawer is the slide-in nav. Using
+    // Scaffold's drawer (not a manual Stack) means we get the canonical
+    // Android swipe-from-left edge gesture for free, plus the scrim
+    // and focus-trap behavior users expect.
+    if (!wide) {
+      return Scaffold(
+        backgroundColor: AppColors.bgPrimary,
+        // We add the body as a SafeArea so the top status bar (battery,
+        // time) reserves space above the top bar, and the system gesture
+        // bar reserves space below the content. This fixes the overlap
+        // the user reported.
+        body: SafeArea(
+          top: false, // top is handled by _MobileTopBar's own SafeArea
+          bottom: true,
+          child: _MobileTopBar(
+            isActive: _isActive,
+            child: child,
+            brand: const _BrandMark(),
+          ),
+        ),
+        drawer: _MobileDrawer(items: _nav, isActive: _isActive),
+        drawerEnableOpenDragGesture: true,
+      );
+    }
+
+    // Wide layout: persistent left sidebar (unchanged).
     return Scaffold(
       backgroundColor: AppColors.bgPrimary,
       body: Row(
         children: [
-          if (wide) _Sidebar(items: _nav, isActive: _isActive),
+          _Sidebar(items: _nav, isActive: _isActive),
           Expanded(
             child: Column(
               children: [
-                if (!wide) _TopBar(items: _nav, isActive: _isActive),
+                const SizedBox.shrink(),
                 Expanded(child: child),
               ],
             ),
@@ -543,6 +569,200 @@ class _TopBar extends StatelessWidget {
               tooltip: n.label,
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Mobile (width < 720) top bar: hamburger left, brand centered, system
+/// indicator right. Wrapped in SafeArea so the OS status bar (battery,
+/// time, signal) reserves its own row above the bar instead of
+/// overlapping the brand text.
+class _MobileTopBar extends StatelessWidget {
+  const _MobileTopBar({
+    required this.child,
+    required this.isActive,
+    required this.brand,
+  });
+
+  final Widget child;
+  final bool Function(String, String) isActive;
+  final Widget brand;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SafeArea(
+          bottom: false,
+          child: Container(
+            height: 56,
+            decoration: const BoxDecoration(
+              color: AppColors.bgSecondary,
+              border: Border(
+                bottom: BorderSide(color: AppColors.border, width: 1),
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            child: Row(
+              children: [
+                // Hamburger — opens the slide-in nav drawer.
+                Builder(
+                  builder: (innerCtx) => IconButton(
+                    icon: const Icon(
+                      Icons.menu,
+                      size: 22,
+                      color: AppColors.textPrimary,
+                    ),
+                    tooltip: 'Open navigation',
+                    onPressed: () => Scaffold.of(innerCtx).openDrawer(),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(child: brand),
+                IconButton(
+                  icon: const Icon(
+                    Icons.notifications_none,
+                    size: 20,
+                    color: AppColors.textMuted,
+                  ),
+                  tooltip: 'Notifications',
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: MonoText(
+                          'NO NEW ALERTS',
+                          color: AppColors.textSecondary,
+                        ),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+        Expanded(child: child),
+      ],
+    );
+  }
+}
+
+/// Slide-in drawer used on mobile. Renders the same nav items as the
+/// desktop sidebar, so users get one consistent mental model regardless
+/// of device class.
+class _MobileDrawer extends StatelessWidget {
+  const _MobileDrawer({required this.items, required this.isActive});
+  final List<_NavItem> items;
+  final bool Function(String path, String item) isActive;
+
+  @override
+  Widget build(BuildContext context) {
+    // Material's Drawer already gives us the correct width, scrim, and
+    // edge-swipe gesture. We just paint the contents.
+    return Drawer(
+      backgroundColor: AppColors.bgSecondary,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.zero,
+      ),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: AppSpacing.md),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              child: _BrandMark(),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              child: Divider(height: 1, color: AppColors.border),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            for (final n in items)
+              _DrawerItem(
+                item: n,
+                active: isActive(n.path, n.path),
+                onTap: () {
+                  Navigator.of(context).pop(); // close the drawer
+                  context.go(n.path);
+                },
+              ),
+            const Spacer(),
+            const Padding(
+              padding: EdgeInsets.all(AppSpacing.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  StatusDot('SYSTEM ONLINE'),
+                  SizedBox(height: AppSpacing.xs),
+                  MonoText(
+                    'INTELLIGENCE FEED',
+                    size: 9,
+                    letterSpacing: 1.2,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerItem extends StatelessWidget {
+  const _DrawerItem({
+    required this.item,
+    required this.active,
+    required this.onTap,
+  });
+  final _NavItem item;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? AppColors.lime : AppColors.textPrimary;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        height: 48,
+        margin: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: 1,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        decoration: BoxDecoration(
+          color: active
+              ? AppColors.lime.withValues(alpha: 0.08)
+              : Colors.transparent,
+          border: Border(
+            left: BorderSide(
+              color: active ? AppColors.lime : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              active ? item.iconActive : item.icon,
+              size: 18,
+              color: color,
+            ),
+            const SizedBox(width: AppSpacing.md),
+            MonoText(
+              item.label.toUpperCase(),
+              color: color,
+              size: 12,
+              weight: active ? FontWeight.w700 : FontWeight.w500,
+              letterSpacing: 1.4,
+            ),
+          ],
+        ),
       ),
     );
   }
