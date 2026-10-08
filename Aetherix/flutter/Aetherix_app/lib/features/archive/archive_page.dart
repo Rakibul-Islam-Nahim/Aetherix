@@ -7,12 +7,16 @@ import '../../models/article.dart';
 import '../../services/news_service.dart';
 import '../../widgets/article_card.dart';
 
-/// Selected day in the Archive. ``null`` means no day selected — show
-/// only the calendar. We default to *today* on first load.
+/// Selected day in the Archive. Defaults to *today* on first load.
 final _selectedDayProvider = StateProvider<DateTime?>((ref) {
   final now = DateTime.now();
   return DateTime(now.year, now.month, now.day);
 });
+
+/// Whether the calendar pane is currently shown. Starts visible (popped
+/// up). Picking a day dismisses it; the appbar "RECHECK" button re-opens
+/// it.
+final _calendarVisibleProvider = StateProvider<bool>((ref) => true);
 
 /// Visible month in the Archive calendar.
 final _visibleMonthProvider = StateProvider<DateTime>((ref) {
@@ -63,6 +67,7 @@ class ArchivePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final selected = ref.watch(_selectedDayProvider);
     final visible = ref.watch(_visibleMonthProvider);
+    final calendarOpen = ref.watch(_calendarVisibleProvider);
 
     // The counts map covers a wide window so the calendar can mark days
     // with dots. Pulling the whole month at once is fine for the dataset
@@ -77,33 +82,38 @@ class ArchivePage extends ConsumerWidget {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _ArchiveHeader(),
-          _CalendarPane(
-            visible: visible,
-            selected: selected,
-            countsAsync: counts,
-            onSelect: (d) {
-              ref.read(_selectedDayProvider.notifier).state = DateTime(
-                d.year,
-                d.month,
-                d.day,
-              );
-            },
-            onPrev: () {
-              ref.read(_visibleMonthProvider.notifier).state =
-                  DateTime(visible.year, visible.month - 1, 1);
-            },
-            onNext: () {
-              ref.read(_visibleMonthProvider.notifier).state =
-                  DateTime(visible.year, visible.month + 1, 1);
+          _ArchiveHeader(
+            selectedDay: selected,
+            calendarOpen: calendarOpen,
+            onRecheck: () {
+              ref.read(_calendarVisibleProvider.notifier).state = true;
             },
           ),
-          const Divider(height: 1, color: AppColors.border),
-          Expanded(
-            child: selected == null
-                ? const _EmptyCalendar()
-                : _DayPane(day: selected),
-          ),
+          if (calendarOpen)
+            Flexible(
+              fit: FlexFit.loose,
+              child: _CalendarPane(
+                visible: visible,
+                selected: selected,
+                countsAsync: counts,
+                onSelect: (d) {
+                  ref.read(_selectedDayProvider.notifier).state =
+                      DateTime(d.year, d.month, d.day);
+                  // Picking a day dismisses the calendar popup.
+                  ref.read(_calendarVisibleProvider.notifier).state = false;
+                },
+                onPrev: () {
+                  ref.read(_visibleMonthProvider.notifier).state =
+                      DateTime(visible.year, visible.month - 1, 1);
+                },
+                onNext: () {
+                  ref.read(_visibleMonthProvider.notifier).state =
+                      DateTime(visible.year, visible.month + 1, 1);
+                },
+              ),
+            ),
+          if (!calendarOpen && selected != null)
+            Expanded(child: _DayPane(day: selected!)),
         ],
       ),
     );
@@ -111,8 +121,22 @@ class ArchivePage extends ConsumerWidget {
 }
 
 class _ArchiveHeader extends StatelessWidget {
+  const _ArchiveHeader({
+    required this.selectedDay,
+    required this.calendarOpen,
+    required this.onRecheck,
+  });
+
+  final DateTime? selectedDay;
+  final bool calendarOpen;
+  final VoidCallback onRecheck;
+
   @override
   Widget build(BuildContext context) {
+    final dayLabel = selectedDay == null
+        ? null
+        : DateFormat('EEEE, MMM d').format(selectedDay!);
+
     return Container(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
@@ -128,10 +152,30 @@ class _ArchiveHeader extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          StatusDot('HISTORICAL INTELLIGENCE'),
-          SizedBox(height: AppSpacing.xs),
-          Text(
+        children: [
+          Row(
+            children: [
+              const StatusDot('HISTORICAL INTELLIGENCE'),
+              const Spacer(),
+              if (!calendarOpen)
+                TextButton.icon(
+                  onPressed: onRecheck,
+                  icon: const Icon(Icons.event_repeat,
+                      size: 14, color: AppColors.lime),
+                  label: const Text(
+                    'RECHECK',
+                    style: TextStyle(
+                      color: AppColors.lime,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 1.2,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          const Text(
             'ARCHIVE',
             style: TextStyle(
               fontSize: 22,
@@ -139,10 +183,14 @@ class _ArchiveHeader extends StatelessWidget {
               letterSpacing: 4,
             ),
           ),
-          SizedBox(height: 2),
+          const SizedBox(height: 2),
           Text(
-            'Pick a day. Read what happened.',
-            style: TextStyle(
+            calendarOpen
+                ? 'Pick a day. Read what happened.'
+                : (dayLabel == null
+                    ? 'No day selected.'
+                    : 'Showing: $dayLabel'),
+            style: const TextStyle(
               fontSize: 12,
               color: AppColors.textMuted,
             ),
@@ -179,15 +227,16 @@ class _CalendarPane extends StatelessWidget {
     final leadingBlanks = firstWeekday - 1;
     final daysInMonth = DateTime(visible.year, visible.month + 1, 0).day;
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.md,
-        AppSpacing.md,
-        AppSpacing.md,
-        AppSpacing.sm,
-      ),
+    return ColoredBox(
       color: AppColors.bgPrimary,
-      child: Column(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.md,
+          AppSpacing.md,
+          AppSpacing.sm,
+        ),
+        child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
@@ -253,6 +302,7 @@ class _CalendarPane extends StatelessWidget {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -302,7 +352,7 @@ class _Grid extends StatelessWidget {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       crossAxisCount: 7,
-      childAspectRatio: 1.05,
+      childAspectRatio: 1.0,
       children: children,
     );
   }
@@ -508,21 +558,6 @@ class _DayPane extends ConsumerWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _EmptyCalendar extends StatelessWidget {
-  const _EmptyCalendar();
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: MonoText(
-        'SELECT A DAY',
-        color: AppColors.textMuted,
-        size: 11,
-        letterSpacing: 1.4,
-      ),
     );
   }
 }

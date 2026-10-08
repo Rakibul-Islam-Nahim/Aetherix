@@ -9,6 +9,41 @@ import '../features/bookmarks/bookmarks_page.dart';
 import '../features/feed/feed_page.dart';
 import '../features/news/article_page.dart';
 import '../features/settings/settings_page.dart';
+import '../widgets/hive_effects.dart';
+
+/// Shared page transition: fade + small slide. Keeps the eye on the
+/// content instead of a hard swap.
+CustomTransitionPage<T> _fadePage<T>({
+  required LocalKey key,
+  required Widget Function(BuildContext) childBuilder,
+}) {
+  return CustomTransitionPage<T>(
+    key: key,
+    transitionDuration: const Duration(milliseconds: 220),
+    reverseTransitionDuration: const Duration(milliseconds: 180),
+    child: _Deferred(childBuilder: childBuilder),
+    transitionsBuilder: (context, animation, secondary, child) {
+      final t = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+      return FadeTransition(
+        opacity: t,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.04),
+            end: Offset.zero,
+          ).animate(t),
+          child: child,
+        ),
+      );
+    },
+  );
+}
+
+class _Deferred extends StatelessWidget {
+  const _Deferred({required this.childBuilder});
+  final Widget Function(BuildContext) childBuilder;
+  @override
+  Widget build(BuildContext context) => childBuilder(context);
+}
 
 final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -20,30 +55,48 @@ final routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(
             path: '/',
-            builder: (_, __) => const FeedPage(),
+            pageBuilder: (context, state) => _fadePage(
+              key: state.pageKey,
+              childBuilder: (_) => const FeedPage(),
+            ),
           ),
           GoRoute(
             path: '/archive',
-            builder: (_, __) => const ArchivePage(),
+            pageBuilder: (context, state) => _fadePage(
+              key: state.pageKey,
+              childBuilder: (_) => const ArchivePage(),
+            ),
           ),
           GoRoute(
             path: '/bookmarks',
-            builder: (_, __) => const BookmarksPage(),
+            pageBuilder: (context, state) => _fadePage(
+              key: state.pageKey,
+              childBuilder: (_) => const BookmarksPage(),
+            ),
           ),
           GoRoute(
             path: '/settings',
-            builder: (_, __) => const SettingsPage(),
+            pageBuilder: (context, state) => _fadePage(
+              key: state.pageKey,
+              childBuilder: (_) => const SettingsPage(),
+            ),
           ),
         ],
       ),
       GoRoute(
         path: '/article',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final id = state.uri.queryParameters['id'];
           if (id == null) {
-            return const _BadArticleRoute();
+            return _fadePage(
+              key: state.pageKey,
+              childBuilder: (_) => const _BadArticleRoute(),
+            );
           }
-          return ArticlePage(articleId: int.parse(id));
+          return _fadePage(
+            key: state.pageKey,
+            childBuilder: (_) => ArticlePage(articleId: int.parse(id)),
+          );
         },
       ),
     ],
@@ -63,18 +116,53 @@ class AetherixApp extends ConsumerWidget {
       theme: AppTheme.dark,
       routerConfig: router,
       builder: (context, child) {
-        return auth.when(
-          loading: () => const _SplashScreen(),
-          error: (e, _) => _ErrorScreen(error: e.toString()),
-          data: (_) => child ?? const SizedBox.shrink(),
+        return HackerBackdrop(
+          child: auth.when(
+            loading: () => const _SplashScreen(),
+            error: (e, _) => _ErrorScreen(error: e.toString()),
+            data: (_) => child ?? const SizedBox.shrink(),
+          ),
         );
       },
     );
   }
 }
 
-class _SplashScreen extends StatelessWidget {
+class _SplashScreen extends StatefulWidget {
   const _SplashScreen();
+
+  @override
+  State<_SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<_SplashScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctl;
+  late final Animation<double> _scale;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..forward();
+    _scale = CurvedAnimation(
+      parent: _ctl,
+      curve: Curves.easeOutCubic,
+    ).drive(Tween<double>(begin: 0.7, end: 1.0));
+    _fade = CurvedAnimation(
+      parent: _ctl,
+      curve: Curves.easeIn,
+    ).drive(Tween<double>(begin: 0.0, end: 1.0));
+  }
+
+  @override
+  void dispose() {
+    _ctl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -84,26 +172,68 @@ class _SplashScreen extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'AETHERIX',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 6,
-                color: AppColors.lime,
+            FadeTransition(
+              opacity: _fade,
+              child: ScaleTransition(
+                scale: _scale,
+                child: Container(
+                  width: 96,
+                  height: 96,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppColors.lime, width: 1.4),
+                    borderRadius: BorderRadius.circular(AppRadii.medium),
+                    color: AppColors.surface,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.lime.withValues(alpha: 0.18),
+                        blurRadius: 24,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.all(10),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(AppRadii.small),
+                    child: Image.asset(
+                      'assets/images/Aetherix-Icon.png',
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            FadeTransition(
+              opacity: _fade,
+              child: const GlitchText(
+                'AETHERIX',
+                intensity: 1.4,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 6,
+                  color: AppColors.lime,
+                ),
               ),
             ),
             const SizedBox(height: AppSpacing.md),
             const SizedBox(
-              width: 32,
+              width: 64,
               child: LinearProgressIndicator(
                 backgroundColor: AppColors.surface,
                 color: AppColors.lime,
-                minHeight: 2,
+                minHeight: 1.5,
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            const StatusDot('SYSTEM INITIALIZING'),
+            const PulseGlow('SYSTEM INITIALIZING'),
+            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(
+              width: 240,
+              child: TerminalMarquee(
+                text: 'AETHERIX :: CYBERSENTINEL :: OPS // AETHERIX :: ',
+              ),
+            ),
           ],
         ),
       ),
@@ -285,20 +415,19 @@ class _BrandMark extends StatelessWidget {
     return Row(
       children: [
         Container(
-          width: 28,
-          height: 28,
+          width: 32,
+          height: 32,
           decoration: BoxDecoration(
-            border: Border.all(color: AppColors.lime, width: 1.4),
+            border: Border.all(color: AppColors.lime, width: 1.2),
             borderRadius: BorderRadius.circular(AppRadii.small),
+            color: AppColors.bgPrimary,
           ),
-          child: const Center(
-            child: Text(
-              'A',
-              style: TextStyle(
-                color: AppColors.lime,
-                fontWeight: FontWeight.w800,
-                fontSize: 16,
-              ),
+          padding: const EdgeInsets.all(3),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadii.small),
+            child: Image.asset(
+              'assets/images/Aetherix-Icon.png',
+              fit: BoxFit.contain,
             ),
           ),
         ),

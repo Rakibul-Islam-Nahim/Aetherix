@@ -56,6 +56,19 @@ class FilterCriteria {
 
   bool get isEmpty =>
       keyword.isEmpty && tag == null && minImportance == 0 && tier == null;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is FilterCriteria &&
+        other.keyword == keyword &&
+        other.tag == tag &&
+        other.minImportance == minImportance &&
+        other.tier == tier;
+  }
+
+  @override
+  int get hashCode => Object.hash(keyword, tag, minImportance, tier);
 }
 
 class FilterBar extends StatefulWidget {
@@ -63,10 +76,15 @@ class FilterBar extends StatefulWidget {
     super.key,
     required this.criteria,
     required this.onChanged,
+    this.onRefresh,
   });
 
   final FilterCriteria criteria;
   final ValueChanged<FilterCriteria> onChanged;
+
+  /// Optional reload handler. When non-null a small refresh icon is
+  /// rendered at the right end of the tag-chip row.
+  final VoidCallback? onRefresh;
 
   @override
   State<FilterBar> createState() => _FilterBarState();
@@ -126,38 +144,62 @@ class _FilterBarState extends State<FilterBar> {
           ),
           const SizedBox(height: AppSpacing.xs),
           // Tag chips
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _Pill(
-                  label: 'ALL TAGS',
-                  selected: _draft.tag == null,
-                  color: AppColors.textSecondary,
-                  onTap: () {
-                    setState(() => _draft = _draft.copyWith(tag: null));
-                    widget.onChanged(_draft);
-                  },
-                ),
-                for (final t in kAetherixTags)
-                  Padding(
-                    padding: const EdgeInsets.only(left: AppSpacing.xs),
-                    child: _Pill(
-                      label: t.toUpperCase(),
-                      selected: _draft.tag == t,
-                      color: AppColors.lime,
-                      onTap: () {
-                        setState(
-                          () => _draft = _draft.copyWith(
-                            tag: _draft.tag == t ? null : t,
+          Row(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _Pill(
+                        label: 'ALL TAGS',
+                        selected: _draft.tag == null,
+                        color: AppColors.textSecondary,
+                        onTap: () {
+                          setState(() => _draft = _draft.copyWith(tag: null));
+                          widget.onChanged(_draft);
+                        },
+                      ),
+                      for (final t in kAetherixTags)
+                        Padding(
+                          padding: const EdgeInsets.only(left: AppSpacing.xs),
+                          child: _Pill(
+                            label: t.toUpperCase(),
+                            selected: _draft.tag == t,
+                            color: AppColors.lime,
+                            onTap: () {
+                              setState(
+                                () => _draft = _draft.copyWith(
+                                  tag: _draft.tag == t ? null : t,
+                                ),
+                              );
+                              widget.onChanged(_draft);
+                            },
                           ),
-                        );
-                        widget.onChanged(_draft);
-                      },
-                    ),
+                        ),
+                    ],
                   ),
+                ),
+              ),
+              if (widget.onRefresh != null) ...[
+                const SizedBox(width: AppSpacing.xs),
+                IconButton(
+                  icon: const Icon(
+                    Icons.refresh,
+                    size: 16,
+                    color: AppColors.lime,
+                  ),
+                  tooltip: 'Refresh',
+                  onPressed: widget.onRefresh,
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
+                ),
               ],
-            ),
+            ],
           ),
           const SizedBox(height: AppSpacing.xxs),
           // Importance tier chips

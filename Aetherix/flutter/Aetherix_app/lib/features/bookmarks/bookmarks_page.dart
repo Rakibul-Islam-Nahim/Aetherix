@@ -77,6 +77,9 @@ class BookmarksPage extends ConsumerWidget {
                   backgroundColor: AppColors.surface,
                   onRefresh: () async => ref.invalidate(bookmarksProvider),
                   child: ListView.separated(
+                    physics: const BouncingScrollPhysics(
+                      decelerationRate: ScrollDecelerationRate.normal,
+                    ),
                     padding: const EdgeInsets.all(AppSpacing.md),
                     itemCount: list.length,
                     separatorBuilder: (_, __) =>
@@ -132,6 +135,30 @@ class BookmarksPage extends ConsumerWidget {
                                 const Spacer(),
                                 MonoText(fmt.format(b.createdAt),
                                     color: AppColors.textMuted, size: 10),
+                                const SizedBox(width: AppSpacing.xs),
+                                IconButton(
+                                  tooltip: 'Delete bookmark',
+                                  icon: const Icon(Icons.delete_outline,
+                                      size: 18, color: AppColors.critical),
+                                  onPressed: () async {
+                                    final messenger =
+                                        ScaffoldMessenger.of(context);
+                                    await ref
+                                        .read(newsServiceProvider)
+                                        .unbookmark(b.articleId);
+                                    ref.invalidate(bookmarksProvider);
+                                    messenger.showSnackBar(SnackBar(
+                                      content: Text(
+                                        'Bookmark #${b.articleId} removed',
+                                        style: const TextStyle(
+                                            color: AppColors.bgPrimary,
+                                            fontWeight: FontWeight.w600),
+                                      ),
+                                      backgroundColor: AppColors.lime,
+                                      duration: const Duration(seconds: 2),
+                                    ));
+                                  },
+                                ),
                               ],
                             ),
                           ),

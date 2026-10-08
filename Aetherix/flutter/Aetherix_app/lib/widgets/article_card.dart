@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/theme/app_theme.dart';
 import '../models/article.dart';
 import '../services/news_service.dart';
+
+/// The id of the article that is currently expanded as an inline
+/// dropdown across all list views (Feed, Archive, Bookmarks).
+/// ``null`` = no card is open. Selecting a new card collapses any
+/// previously expanded one.
+final expandedArticleIdProvider = StateProvider<int?>((_) => null);
 
 /// Dense intelligence card with inline expansion.
 ///
@@ -16,7 +23,7 @@ import '../services/news_service.dart';
 /// On tap the card expands inline:
 ///   • WHAT HAPPENED (lazy-loaded detail)
 ///   • action row   ``[ READ SOURCE ] [ VIEW FULL ]``
-class ArticleCard extends StatefulWidget {
+class ArticleCard extends ConsumerWidget {
   const ArticleCard({
     super.key,
     required this.article,
@@ -27,68 +34,137 @@ class ArticleCard extends StatefulWidget {
   final VoidCallback? onToggleBookmark;
 
   @override
-  State<ArticleCard> createState() => _ArticleCardState();
-}
-
-class _ArticleCardState extends State<ArticleCard> {
-  bool _expanded = false;
-
-  void _toggle() => setState(() => _expanded = !_expanded);
-
-  @override
-  Widget build(BuildContext context) {
-    final a = widget.article;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final a = article;
     final tier = ImportanceTier.fromScore(a.importanceScore);
     final tag = tagOrFallback(a.tag);
     final fmt = DateFormat.MMMd().add_Hm();
+    final expanded = ref.watch(expandedArticleIdProvider);
+    final isOpen = expanded == a.id;
+    void toggle() {
+      ref.read(expandedArticleIdProvider.notifier).state =
+          isOpen ? null : a.id;
+    }
 
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
-        border: Border.all(color: AppColors.border),
+        border: Border.all(
+          color: isOpen ? AppColors.lime.withValues(alpha: 0.6) : AppColors.border,
+        ),
         borderRadius: BorderRadius.circular(AppRadii.small),
+        boxShadow: isOpen
+            ? [
+                BoxShadow(
+                  color: AppColors.lime.withValues(alpha: 0.08),
+                  blurRadius: 12,
+                  spreadRadius: 0,
+                ),
+              ]
+            : null,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Stack(
         children: [
-          InkWell(
-            onTap: _toggle,
-            borderRadius: BorderRadius.circular(AppRadii.small),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.md,
-                AppSpacing.sm,
-                AppSpacing.md,
+          // Animated left accent rail when the card is expanded.
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              curve: Curves.easeOut,
+              width: isOpen ? 2.5 : 0,
+              decoration: BoxDecoration(
+                color: AppColors.lime,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(AppRadii.small),
+                  bottomLeft: Radius.circular(AppRadii.small),
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _MetaRow(
-                    tier: tier,
-                    tag: tag,
-                    score: a.importanceScore,
-                    time: fmt.format(a.publishedAt ?? a.discoveredAt),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    a.title,
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontSize: 16,
-                          height: 1.3,
-                        ),
-                  ),
-                  if (_expanded) ...[
-                    const SizedBox(height: AppSpacing.md),
-                    _WhatHappened(articleId: a.id),
-                    const SizedBox(height: AppSpacing.md),
-                    _Actions(
-                      canonicalUrl: a.canonicalUrl,
-                      articleId: a.id,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                InkWell(
+                  onTap: toggle,
+                  borderRadius: BorderRadius.circular(AppRadii.small),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      AppSpacing.md,
+                      AppSpacing.sm,
+                      AppSpacing.md,
                     ),
-                  ],
-                ],
-              ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _MetaRow(
+                          tier: tier,
+                          tag: tag,
+                          score: a.importanceScore,
+                          time: fmt.format(a.publishedAt ?? a.discoveredAt),
+                          expanded: isOpen,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        Text(
+                          a.title,
+                          style:
+                              Theme.of(context).textTheme.titleLarge?.copyWith(
+                                    fontSize: 16,
+                                    height: 1.3,
+                                  ),
+                        ),
+                        AnimatedSize(
+                          duration: const Duration(milliseconds: 280),
+                          curve: Curves.easeOutCubic,
+                          alignment: Alignment.topCenter,
+                          child: isOpen
+                              ? Padding(
+                                      padding: const EdgeInsets.only(
+                                          top: AppSpacing.md),
+                                      child: TweenAnimationBuilder<double>(
+                                        tween: Tween(begin: 0, end: 1),
+                                        duration:
+                                            const Duration(milliseconds: 320),
+                                        curve: Curves.easeOutCubic,
+                                        builder: (context, t, _) => Opacity(
+                                          opacity: t,
+                                          child: Transform.translate(
+                                            offset: Offset(0, 8 * (1 - t)),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                const Divider(
+                                                  height: AppSpacing.md,
+                                                  color: AppColors.border,
+                                                  thickness: 1,
+                                                ),
+                                                _WhatHappened(articleId: a.id),
+                                                const SizedBox(
+                                                    height: AppSpacing.md),
+                                                _Actions(
+                                                  canonicalUrl:
+                                                      a.canonicalUrl,
+                                                  articleId: a.id,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                              : const SizedBox(
+                                  width: double.infinity, height: 0),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -103,40 +179,58 @@ class _MetaRow extends StatelessWidget {
     required this.tag,
     required this.score,
     required this.time,
+    required this.expanded,
   });
   final ImportanceTier tier;
   final String tag;
   final double? score;
   final String time;
+  final bool expanded;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: AppSpacing.xs,
-      runSpacing: AppSpacing.xxs,
+    return Row(
       children: [
-        _TierChip(tier: tier),
-        _TagChip(label: tag),
-        if (score != null)
-          Row(
-            mainAxisSize: MainAxisSize.min,
+        Expanded(
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: AppSpacing.xs,
+            runSpacing: AppSpacing.xxs,
             children: [
-              const Icon(Icons.local_fire_department,
-                  size: 11, color: AppColors.textPrimary),
-              const SizedBox(width: 3),
-              MonoText(
-                '${score!.toStringAsFixed(1)}/10',
-                color: AppColors.textPrimary,
-                size: 11,
-                weight: FontWeight.w600,
-                letterSpacing: 0.6,
+              _TierChip(tier: tier),
+              _TagChip(label: tag),
+              if (score != null)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.local_fire_department,
+                        size: 11, color: AppColors.textPrimary),
+                    const SizedBox(width: 3),
+                    MonoText(
+                      '${score!.toStringAsFixed(1)}/10',
+                      color: AppColors.textPrimary,
+                      size: 11,
+                      weight: FontWeight.w600,
+                      letterSpacing: 0.6,
+                    ),
+                  ],
+                ),
+              Padding(
+                padding: const EdgeInsets.only(left: 2),
+                child: MonoText(time, color: AppColors.textMuted, size: 10),
               ),
             ],
           ),
-        Padding(
-          padding: const EdgeInsets.only(left: 2),
-          child: MonoText(time, color: AppColors.textMuted, size: 10),
+        ),
+        AnimatedRotation(
+          turns: expanded ? 0.5 : 0,
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          child: Icon(
+            Icons.expand_more,
+            size: 18,
+            color: expanded ? AppColors.lime : AppColors.textMuted,
+          ),
         ),
       ],
     );
@@ -303,10 +397,11 @@ class _Actions extends StatelessWidget {
             icon: const Icon(Icons.article_outlined, size: 14),
             label: const Text('VIEW FULL'),
             onPressed: () {
-              Navigator.of(context).pushNamed(
-                '/article',
-                arguments: articleId,
-              );
+              // Use go_router's push so the system back button / AppBar
+              // back arrow pops to the previous route. Navigator.pushNamed
+              // would throw onGenerateRoute was null because go_router
+              // doesn't register its routes with the Flutter Navigator.
+              context.push('/article?id=$articleId');
             },
           ),
         ),
