@@ -7,6 +7,12 @@ import '../core/theme/app_theme.dart';
 import '../models/article.dart';
 import '../services/news_service.dart';
 
+/// The id of the article that is currently expanded as an inline
+/// dropdown across all list views (Feed, Archive, Bookmarks).
+/// ``null`` = no card is open. Selecting a new card collapses any
+/// previously expanded one.
+final expandedArticleIdProvider = StateProvider<int?>((_) => null);
+
 /// Dense intelligence card with inline expansion.
 ///
 /// Collapsed header layout (single row):
@@ -16,7 +22,7 @@ import '../services/news_service.dart';
 /// On tap the card expands inline:
 ///   • WHAT HAPPENED (lazy-loaded detail)
 ///   • action row   ``[ READ SOURCE ] [ VIEW FULL ]``
-class ArticleCard extends StatefulWidget {
+class ArticleCard extends ConsumerWidget {
   const ArticleCard({
     super.key,
     required this.article,
@@ -27,20 +33,17 @@ class ArticleCard extends StatefulWidget {
   final VoidCallback? onToggleBookmark;
 
   @override
-  State<ArticleCard> createState() => _ArticleCardState();
-}
-
-class _ArticleCardState extends State<ArticleCard> {
-  bool _expanded = false;
-
-  void _toggle() => setState(() => _expanded = !_expanded);
-
-  @override
-  Widget build(BuildContext context) {
-    final a = widget.article;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final a = article;
     final tier = ImportanceTier.fromScore(a.importanceScore);
     final tag = tagOrFallback(a.tag);
     final fmt = DateFormat.MMMd().add_Hm();
+    final expanded = ref.watch(expandedArticleIdProvider);
+    final isOpen = expanded == a.id;
+    void toggle() {
+      ref.read(expandedArticleIdProvider.notifier).state =
+          isOpen ? null : a.id;
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -52,7 +55,7 @@ class _ArticleCardState extends State<ArticleCard> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
-            onTap: _toggle,
+            onTap: toggle,
             borderRadius: BorderRadius.circular(AppRadii.small),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(
@@ -78,7 +81,7 @@ class _ArticleCardState extends State<ArticleCard> {
                           height: 1.3,
                         ),
                   ),
-                  if (_expanded) ...[
+                  if (isOpen) ...[
                     const SizedBox(height: AppSpacing.md),
                     _WhatHappened(articleId: a.id),
                     const SizedBox(height: AppSpacing.md),
