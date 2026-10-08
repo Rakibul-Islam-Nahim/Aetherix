@@ -1,11 +1,27 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Network access for the Aetherix backend API -->
+
+    <!-- ============================================================
+         Permissions required for Aetherix (tech-news reader).
+         The release manifest must declare them itself; the debug and
+         profile variants add INTERNET separately for hot-reload, but
+         release builds get only what's declared here.
+         ============================================================ -->
+
+    <!-- Talk to https://news.cybersentinel.top/api/v1 (and to source RSS
+         thumbnails / og:image previews via https URLs). -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
+    <!-- Let the app check whether Wi-Fi/cellular is available before
+         firing a request, so the UI can show an "offline" banner
+         instead of hanging on a failed connect. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
     <application
-        android:label="aetherix_app"
+        android:label="Aetherix"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"
