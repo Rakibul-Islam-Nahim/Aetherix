@@ -38,4 +38,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/images/Aetherix-Icon.png
+    - assets/images/
     - assets/

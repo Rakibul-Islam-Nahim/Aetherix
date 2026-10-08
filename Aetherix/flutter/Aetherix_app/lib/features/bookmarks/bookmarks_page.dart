@@ -77,6 +77,9 @@ class BookmarksPage extends ConsumerWidget {
                   backgroundColor: AppColors.surface,
                   onRefresh: () async => ref.invalidate(bookmarksProvider),
                   child: ListView.separated(
+                    physics: const BouncingScrollPhysics(
+                      decelerationRate: ScrollDecelerationRate.normal,
+                    ),
                     padding: const EdgeInsets.all(AppSpacing.md),
                     itemCount: list.length,
                     separatorBuilder: (_, __) =>

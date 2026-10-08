@@ -7,6 +7,17 @@ import '../../models/article.dart';
 import '../../services/news_service.dart';
 import '../../widgets/article_card.dart';
 import '../../widgets/filter_bar.dart';
+import '../../widgets/hive_effects.dart';
+
+/// Returns ``YYYY-MM-DD`` for today (local time). Kept as a top-level
+/// helper so the same string format is used everywhere the feed needs
+/// to scope its date range.
+String _todayIso(DateTime now) {
+  final d = DateTime(now.year, now.month, now.day);
+  final mm = d.month.toString().padLeft(2, '0');
+  final dd = d.day.toString().padLeft(2, '0');
+  return '${d.year}-$mm-$dd';
+}
 
 final _feedFilterProvider = StateProvider<FilterCriteria>(
   (ref) => const FilterCriteria(),
@@ -16,10 +27,20 @@ final _feedFilterProvider = StateProvider<FilterCriteria>(
 /// ``NewsListFilter`` only when the criteria change. Keyed on the
 /// criteria instance so Riverpod caches it per filter — prevents the
 /// per-frame refire loop that left the page stuck on LOADING FEED.
+///
+/// Feed is TODAY-only: we always pass ``from`` and ``to`` covering the
+/// current local day so the backend returns today's articles
+/// regardless of what other filters the user picked.
 final _feedNewsProvider =
     FutureProvider.autoDispose.family<List<ArticleSummary>, FilterCriteria>(
   (ref, criteria) async {
-    final filter = NewsListFilter(tag: criteria.tag, limit: 100);
+    final today = _todayIso(DateTime.now());
+    final filter = NewsListFilter(
+      tag: criteria.tag,
+      from: today,
+      to: today,
+      limit: 100,
+    );
     return ref.watch(newsServiceProvider).list(filter: filter);
   },
 );
@@ -28,8 +49,10 @@ final _feedNewsProvider =
 ///
 /// The top bar holds:
 ///   - left:    ``DASHBOARD`` heading + status dot
-///   - right:   ``LAST UPDATED HH:MM:SS`` live stamp
-///   - middle:  Critical / High / Medium / Low stat tiles
+///   - right:   ``LAST UPDATED · MMM d, HH:mm`` real stamp (refreshes
+///     whenever fresh data lands or the user hits the refresh button)
+///   - middle:  Critical / High / Medium / Low stat tiles (computed
+///     from the today-scoped article list)
 ///
 /// On scroll the bar collapses — only the search bar remains sticky.
 class FeedPage extends ConsumerWidget {
@@ -66,39 +89,48 @@ class _FeedBody extends ConsumerStatefulWidget {
 }
 
 class _FeedBodyState extends ConsumerState<_FeedBody> {
-  // 0 = expanded (full hero), 1 = fully collapsed.
-  double _collapse = 0;
-  late final ValueNotifier<int> _lastUpdatedTick;
+  // 0 = expanded (full hero), 1 = fully collapsed. Stored in a notifier
+  // so that scroll updates only rebuild the floating bar, not the whole
+  // list. Without this the scroll feels janky because the SliverList is
+  // being rebuilt on every pixel.
+  final ValueNotifier<double> _collapse = ValueNotifier<double>(0);
 
-  @override
-  void initState() {
-    super.initState();
-    _lastUpdatedTick = ValueNotifier<int>(DateTime.now().millisecondsSinceEpoch);
-    // Tick the timestamp once per second so it visibly updates.
-    Future<void>.delayed(const Duration(seconds: 1), _tick);
-  }
-
-  void _tick() {
-    if (!mounted) return;
-    _lastUpdatedTick.value = DateTime.now().millisecondsSinceEpoch;
-    Future<void>.delayed(const Duration(seconds: 1), _tick);
-  }
+  /// Real "last refreshed" timestamp. Updated whenever fresh data
+  /// arrives (via ref.listen) or when the user hits the refresh
+  /// button. epoch = "never loaded yet", rendered as ``—``.
+  final ValueNotifier<DateTime> _lastUpdated =
+      ValueNotifier(DateTime.fromMillisecondsSinceEpoch(0));
 
   @override
   void dispose() {
-    _lastUpdatedTick.dispose();
+    _lastUpdated.dispose();
+    _collapse.dispose();
     super.dispose();
   }
 
   void _onScroll(double offset, double maxCollapseOffset) {
     final c = (offset / maxCollapseOffset).clamp(0.0, 1.0);
-    if ((c - _collapse).abs() > 0.01) {
-      setState(() => _collapse = c);
+    // Quantize to 1/64 so micro-frames don't spam rebuilds.
+    final quantized = (c * 64).round() / 64;
+    if (quantized != _collapse.value) {
+      _collapse.value = quantized;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Stamp "last updated" on every successful load (including the
+    // first one). ref.listen fires only on transitions, so this also
+    // covers reloads via the FilterBar refresh button.
+    ref.listen<AsyncValue<List<ArticleSummary>>>(
+      _feedNewsProvider(widget.criteria),
+      (_, next) {
+        if (next.hasValue) {
+          _lastUpdated.value = DateTime.now();
+        }
+      },
+    );
+
     // Apply filter to articles list.
     final all = widget.articles;
     final filtered = all.where((a) {
@@ -147,46 +179,71 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
               }
               return false;
             },
-            child: CustomScrollView(
-              slivers: [
-                // Reserve room for the floating bar.
-                SliverToBoxAdapter(
-                  child: SizedBox(height: headerHeight + AppSpacing.sm),
+            child: RepaintBoundary(
+              child: CustomScrollView(
+                physics: const BouncingScrollPhysics(
+                  decelerationRate: ScrollDecelerationRate.normal,
                 ),
-                SliverPadding(
-                  padding: const EdgeInsets.only(
-                    left: AppSpacing.md,
-                    right: AppSpacing.md,
-                    top: AppSpacing.xs,
-                    bottom: AppSpacing.xl,
+                slivers: [
+                  // Reserve room for the floating bar.
+                  SliverToBoxAdapter(
+                    child: SizedBox(height: headerHeight + AppSpacing.sm),
                   ),
-                  sliver: SliverList.separated(
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, __) =>
-                        const SizedBox(height: AppSpacing.sm),
-                    itemBuilder: (_, i) => ArticleCard(article: filtered[i]),
+                  SliverPadding(
+                    padding: const EdgeInsets.only(
+                      left: AppSpacing.md,
+                      right: AppSpacing.md,
+                      top: AppSpacing.xs,
+                      bottom: AppSpacing.xl,
+                    ),
+                    sliver: SliverList.separated(
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(height: AppSpacing.sm),
+                      itemBuilder: (_, i) => RepaintBoundary(
+                        child: ArticleCard(article: filtered[i]),
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-        // The collapsing app bar floats at the top.
+        // The collapsing app bar floats at the top. Wrapped in
+        // RepaintBoundary + ValueListenableBuilder so its 60fps animation
+        // never forces the list beneath it to relayout.
         Positioned(
           top: 0,
           left: 0,
           right: 0,
-          child: _CollapsingAppBar(
-            collapse: _collapse,
-            headerHeight: headerHeight,
-            stats: stats,
-            visible: visible,
-            total: total,
-            lastUpdatedTick: _lastUpdatedTick,
-            child: FilterBar(
-              criteria: widget.criteria,
-              onChanged: (c) =>
-                  ref.read(_feedFilterProvider.notifier).state = c,
+          child: RepaintBoundary(
+            child: ValueListenableBuilder<double>(
+              valueListenable: _collapse,
+              builder: (context, collapse, _) {
+                return _CollapsingAppBar(
+                  collapse: collapse,
+                  headerHeight: headerHeight,
+                  stats: stats,
+                  visible: visible,
+                  total: total,
+                  lastUpdated: _lastUpdated,
+                  child: FilterBar(
+                    criteria: widget.criteria,
+                    onChanged: (c) =>
+                        ref.read(_feedFilterProvider.notifier).state = c,
+                    onRefresh: () {
+                      // Stamp "just now" immediately so the user sees
+                      // the refresh take effect even before the
+                      // network call completes. ref.invalidate kicks
+                      // the FutureProvider; ref.listen will then
+                      // stamp it again on success.
+                      _lastUpdated.value = DateTime.now();
+                      ref.invalidate(_feedNewsProvider(widget.criteria));
+                    },
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -202,7 +259,7 @@ class _CollapsingAppBar extends StatelessWidget {
     required this.stats,
     required this.visible,
     required this.total,
-    required this.lastUpdatedTick,
+    required this.lastUpdated,
     required this.child,
   });
 
@@ -211,7 +268,7 @@ class _CollapsingAppBar extends StatelessWidget {
   final Map<ImportanceTier, int> stats;
   final int visible;
   final int total;
-  final ValueNotifier<int> lastUpdatedTick;
+  final ValueNotifier<DateTime> lastUpdated;
   final Widget child;
 
   @override
@@ -247,7 +304,7 @@ class _CollapsingAppBar extends StatelessWidget {
                         stats: stats,
                         visible: visible,
                         total: total,
-                        lastUpdatedTick: lastUpdatedTick,
+                        lastUpdated: lastUpdated,
                       ),
                     ),
                   ),
@@ -269,17 +326,17 @@ class _HeroContent extends StatelessWidget {
     required this.stats,
     required this.visible,
     required this.total,
-    required this.lastUpdatedTick,
+    required this.lastUpdated,
   });
 
   final Map<ImportanceTier, int> stats;
   final int visible;
   final int total;
-  final ValueNotifier<int> lastUpdatedTick;
+  final ValueNotifier<DateTime> lastUpdated;
 
   @override
   Widget build(BuildContext context) {
-    final fmt = DateFormat('HH:mm:ss');
+    final fmt = DateFormat('MMM d, HH:mm');
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
@@ -298,15 +355,21 @@ class _HeroContent extends StatelessWidget {
               Icon(Icons.schedule,
                   size: 11, color: AppColors.textMuted),
               const SizedBox(width: 4),
-              ValueListenableBuilder<int>(
-                valueListenable: lastUpdatedTick,
-                builder: (_, __, ___) => MonoText(
-                  'LAST UPDATED ${fmt.format(DateTime.now())}',
-                  color: AppColors.textMuted,
-                  size: 10,
-                  letterSpacing: 1.0,
-                  weight: FontWeight.w700,
-                ),
+              ValueListenableBuilder<DateTime>(
+                valueListenable: lastUpdated,
+                builder: (_, ts, ___) {
+                  // epoch = no data yet
+                  final stamp = ts.millisecondsSinceEpoch == 0
+                      ? '—'
+                      : fmt.format(ts);
+                  return MonoText(
+                    'LAST UPDATED · $stamp',
+                    color: AppColors.textMuted,
+                    size: 10,
+                    letterSpacing: 1.0,
+                    weight: FontWeight.w700,
+                  );
+                },
               ),
             ],
           ),
@@ -373,39 +436,41 @@ class _StatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        border: Border.all(color: AppColors.border),
-        borderRadius: BorderRadius.circular(AppRadii.small),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
-          Text(
-            '$value',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: color,
-              height: 1,
+    return AnimatedBorder(
+      color: color.withValues(alpha: 0.5),
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadii.small),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            AnimatedCounter(
+              value: value,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+                color: color,
+                height: 1,
+              ),
             ),
-          ),
-          const SizedBox(width: AppSpacing.xs),
-          Expanded(
-            child: MonoText(
-              label,
-              color: AppColors.textMuted,
-              size: 9,
-              letterSpacing: 1.0,
+            const SizedBox(width: AppSpacing.xs),
+            Expanded(
+              child: MonoText(
+                label,
+                color: AppColors.textMuted,
+                size: 9,
+                letterSpacing: 1.0,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
