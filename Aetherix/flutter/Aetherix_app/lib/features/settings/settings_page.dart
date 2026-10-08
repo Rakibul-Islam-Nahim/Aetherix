@@ -93,7 +93,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           _AboutTile(
             icon: Icons.bolt_outlined,
             label: 'AETHERIX',
-            value: 'v0.1.0',
+            value: 'V1.1.0',
           ),
           const SizedBox(height: AppSpacing.xxs),
           _AboutTile(
