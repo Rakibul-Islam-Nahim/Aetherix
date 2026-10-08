@@ -17,7 +17,7 @@ import asyncio
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
-from app.core.database import async_session
+from app.core.database import AsyncSessionLocal
 from app.models.orm import Article, ArticleCategory, Category
 from app.services.tag_normalize import normalize
 
@@ -41,7 +41,7 @@ async def _rewrite_one(session, article: Article) -> tuple[int, list[str]]:
 
 async def _run() -> None:
     rewrites = 0
-    async with async_session() as session:
+    async with AsyncSessionLocal() as session:
         stmt = select(Article).options(selectinload(Article.categories))
         rows = (await session.execute(stmt)).scalars().all()
         for article in rows:

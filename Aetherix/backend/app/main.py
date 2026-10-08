@@ -67,20 +67,37 @@ app.include_router(mcp_router)
 app.include_router(internal_router)
 
 
-@app.get("/", include_in_schema=False)
-async def root() -> dict[str, str]:
-    return {
-        "service": "aetherix-backend",
-        "docs": "/docs",
-        "health": "/api/v1/health",
-    }
-
-
-# Serve the Flutter web build at "/" if /app/static exists.
-# This is mounted LAST so all the routes above win over the static catch-all.
+# Serve the Flutter web build if /app/static exists.
+# We mount it LAST so all the routes above win over the static catch-all.
+# The Flutter index.html is served at "/" via a small explicit route so
+# FastAPI's router prefers it over the JSON root when static is mounted.
 _STATIC_DIR = os.environ.get("AETHERIX_WEB_STATIC_DIR", "/app/static")
-if os.path.isdir(_STATIC_DIR):
-    app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="web")
+_HAS_STATIC = os.path.isdir(_STATIC_DIR)
+
+
+if _HAS_STATIC:
+    @app.get("/", include_in_schema=False)
+    async def _flutter_index() -> "FileResponse":
+        from fastapi.responses import FileResponse
+        return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
+
+    @app.get("/service-info", include_in_schema=False)
+    async def _service_info() -> dict[str, str]:
+        return {
+            "service": "aetherix-backend",
+            "docs": "/docs",
+            "health": "/api/v1/health",
+        }
+
+    # Static catch-all (for /assets/*, /icons/*, etc.).
+    app.mount("/", StaticFiles(directory=_STATIC_DIR, html=False), name="web")
     logger.info("aetherix_web_static_mounted", path=_STATIC_DIR)
 else:
+    @app.get("/", include_in_schema=False)
+    async def _root() -> dict[str, str]:
+        return {
+            "service": "aetherix-backend",
+            "docs": "/docs",
+            "health": "/api/v1/health",
+        }
     logger.info("aetherix_web_static_skipped", path=_STATIC_DIR)

@@ -10,6 +10,17 @@ final _feedFilterProvider = StateProvider<FilterCriteria>(
   (ref) => const FilterCriteria(),
 );
 
+/// Maps a ``FilterCriteria`` (UI-side state) to a server-side
+/// ``NewsListFilter`` only when the criteria change. Keyed on the
+/// criteria instance so Riverpod caches it per filter — prevents the
+/// per-frame refire loop that left the page stuck on LOADING FEED.
+final _feedNewsProvider = FutureProvider.family<List<ArticleSummary>, FilterCriteria>(
+  (ref, criteria) async {
+    final filter = NewsListFilter(tag: criteria.tag, limit: 100);
+    return ref.watch(latestNewsProvider(filter).future);
+  },
+);
+
 /// Filter-driven intelligence feed. Server-side ``tag`` is sent to the
 /// backend; importance tier / keyword are applied client-side because
 /// the backend's relevance search is broader than the spec demands.
@@ -19,8 +30,7 @@ class FeedPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final criteria = ref.watch(_feedFilterProvider);
-    final filter = NewsListFilter(tag: criteria.tag, limit: 100);
-    final newsAsync = ref.watch(latestNewsProvider(filter));
+    final newsAsync = ref.watch(_feedNewsProvider(criteria));
 
     return Scaffold(
       backgroundColor: AppColors.bgPrimary,

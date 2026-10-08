@@ -5,6 +5,7 @@ from datetime import datetime, time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import or_, select
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import DBSession, PaginationDep
 from app.core.config import get_settings
@@ -180,6 +181,7 @@ async def search(
         .order_by(Article.published_at.desc().nulls_last())
         .limit(limit)
         .distinct()
+        .options(selectinload(Article.categories), selectinload(Article.source))
     )
     rows = (await session.execute(stmt)).scalars().all()
     out: list[SearchOut] = []

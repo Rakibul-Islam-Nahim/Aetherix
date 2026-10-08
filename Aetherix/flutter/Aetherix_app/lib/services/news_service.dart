@@ -39,6 +39,20 @@ class NewsListFilter {
       );
 
   static const _sentinel = Object();
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is NewsListFilter &&
+        other.limit == limit &&
+        other.offset == offset &&
+        other.tag == tag &&
+        other.from == from &&
+        other.to == to;
+  }
+
+  @override
+  int get hashCode => Object.hash(limit, offset, tag, from, to);
 }
 
 class NewsService {
