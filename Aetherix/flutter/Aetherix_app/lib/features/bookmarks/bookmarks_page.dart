@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/sync/live_sync.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/article.dart';
 import '../../services/news_service.dart';
@@ -12,6 +13,13 @@ class BookmarksPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Live-sync: refresh the bookmarks list on every global tick so
+    // titles (which now come from the joined article row) update if
+    // the underlying article is edited on the backend.
+    ref.listen<LiveSync>(liveSyncProvider, (_, sync) {
+      if (sync.isRunning) ref.invalidate(bookmarksProvider);
+    });
+
     final async = ref.watch(bookmarksProvider);
     return Scaffold(
       backgroundColor: AppColors.bgPrimary,

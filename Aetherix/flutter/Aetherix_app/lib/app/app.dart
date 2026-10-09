@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/alerts/notification_service.dart';
 import '../core/auth/auth_service.dart';
+import '../core/sync/live_sync.dart';
 import '../core/theme/app_theme.dart';
 import '../core/ui/toast_overlay.dart';
 import '../features/archive/archive_page.dart';
@@ -106,18 +107,58 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
-class AetherixApp extends ConsumerWidget {
+class AetherixApp extends ConsumerStatefulWidget {
   const AetherixApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AetherixApp> createState() => _AetherixAppState();
+}
+
+class _AetherixAppState extends ConsumerState<AetherixApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Initialize the notification plugin once at startup. The service
     // is idempotent, so this is safe even if `build` re-runs.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // ignore: discarded_futures
       ref.read(notificationServiceProvider).init();
+      // Start the 60s live-sync tick. The timer only runs while the
+      // app is in the foreground; on `paused` (user backgrounded) we
+      // stop it, on `resumed` we restart and fire one immediate tick
+      // so the user sees fresh data the moment they re-open.
+      ref.read(liveSyncProvider).start();
     });
+  }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final sync = ref.read(liveSyncProvider);
+    switch (state) {
+      case AppLifecycleState.resumed:
+        sync.resume();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        sync.pause();
+      case AppLifecycleState.inactive:
+        // Brief transitions (incoming call, system dialog). Keep
+        // the timer running so the user doesn't see a stale feed
+        // if the dialog is dismissed.
+        break;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
     final auth = ref.watch(authBootstrapProvider);
     return MaterialApp.router(

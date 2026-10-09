@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/sync/live_sync.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/article.dart';
 import '../../services/news_service.dart';
@@ -139,6 +140,20 @@ class _ArchiveBodyState extends ConsumerState<ArchiveBody> {
 
   @override
   Widget build(BuildContext context) {
+    // Live-sync: invalidate both the calendar dot-counts and the
+    // selected day's article list on every global tick so the user
+    // sees new articles land in the archive without re-opening it.
+    ref.listen<LiveSync>(liveSyncProvider, (_, sync) {
+      if (!sync.isRunning) return;
+      ref.invalidate(_dayCountsProvider((
+        from: DateTime(widget.visible.year, widget.visible.month, 1),
+        to: DateTime(widget.visible.year, widget.visible.month + 1, 0),
+      )));
+      if (widget.selected != null) {
+        ref.invalidate(_dayArticlesProvider(widget.selected!));
+      }
+    });
+
     final day = widget.selected;
     final articlesAsync = day == null
         ? const AsyncValue<List<ArticleSummary>>.data([])

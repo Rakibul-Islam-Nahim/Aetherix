@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/alerts/alert_delivery.dart';
+import '../../core/sync/live_sync.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/article.dart';
 import '../../services/news_service.dart';
@@ -151,6 +152,16 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
 
   @override
   Widget build(BuildContext context) {
+    // Live-sync: the global timer ticks every 60s while the app is in
+    // the foreground. Invalidate the news provider on each tick so
+    // the user sees new articles without having to pull-to-refresh.
+    // We only act when the timer is running so an in-flight ``pause``
+    // (app going to background) doesn't kick a fetch.
+    ref.listen<LiveSync>(liveSyncProvider, (_, sync) {
+      if (!sync.isRunning) return;
+      ref.invalidate(_feedNewsProvider(widget.criteria));
+    });
+
     // Stamp "last updated" on every successful load (including the
     // first one). ref.listen fires only on transitions, so this also
     // covers reloads via the FilterBar refresh button.
