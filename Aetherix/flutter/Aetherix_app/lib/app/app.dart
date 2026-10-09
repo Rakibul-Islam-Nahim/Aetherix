@@ -11,6 +11,7 @@ import '../features/bookmarks/bookmarks_page.dart';
 import '../features/feed/feed_page.dart';
 import '../features/news/article_page.dart';
 import '../features/settings/settings_page.dart';
+import '../widgets/animated_ring_border.dart';
 import '../widgets/hive_effects.dart';
 
 /// Shared page transition: fade + small slide. Keeps the eye on the
@@ -187,28 +188,14 @@ class _SplashScreenState extends State<_SplashScreen>
               opacity: _fade,
               child: ScaleTransition(
                 scale: _scale,
-                child: Container(
-                  width: 96,
-                  height: 96,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: AppColors.lime, width: 1.4),
-                    borderRadius: BorderRadius.circular(AppRadii.medium),
-                    color: AppColors.surface,
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.lime.withValues(alpha: 0.18),
-                        blurRadius: 24,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.all(10),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(AppRadii.small),
-                    child: Image.asset(
-                      'assets/images/Aetherix-Icon.png',
-                      fit: BoxFit.contain,
-                    ),
+                child: const AnimatedRingBorder(
+                  size: 110,
+                  strokeWidth: 1.6,
+                  snakeLength: 0.32,
+                  duration: Duration(seconds: 4),
+                  child: Image(
+                    image: AssetImage('assets/images/Icone.png'),
+                    fit: BoxFit.cover,
                   ),
                 ),
               ),
@@ -216,14 +203,15 @@ class _SplashScreenState extends State<_SplashScreen>
             const SizedBox(height: AppSpacing.lg),
             FadeTransition(
               opacity: _fade,
-              child: const GlitchText(
-                'AETHERIX',
-                intensity: 1.4,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 6,
-                  color: AppColors.lime,
+              // title.png is 1085x246 (~4.4:1). We render it at a
+              // fixed height so it stays consistent across phone
+              // sizes; the parent Center keeps it visually centered
+              // under the icon.
+              child: SizedBox(
+                height: 64,
+                child: Image.asset(
+                  'assets/images/title.png',
+                  fit: BoxFit.contain,
                 ),
               ),
             ),
@@ -447,52 +435,43 @@ class _Sidebar extends StatelessWidget {
 
 class _BrandMark extends StatelessWidget {
   const _BrandMark();
+
+  /// Threshold below which the brand collapses to icon-only. The full
+  /// lockup is roughly 4.4:1 (title.png) and the top bar is too tight
+  /// at sub-220px for it to read well — so we hide the title there.
+  static const _lockupBreakpoint = 200.0;
+
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.lime, width: 1.2),
-            borderRadius: BorderRadius.circular(AppRadii.small),
-            color: AppColors.bgPrimary,
-          ),
-          padding: const EdgeInsets.all(3),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadii.small),
-            child: Image.asset(
-              'assets/images/Aetherix-Icon.png',
-              fit: BoxFit.contain,
-            ),
-          ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return LayoutBuilder(
+      builder: (context, c) {
+        final showTitle = c.maxWidth > _lockupBreakpoint;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'AETHERIX',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 3,
-                color: AppColors.textPrimary,
+            const AnimatedRingBorder(
+              size: 36,
+              child: Image(
+                image: AssetImage('assets/images/Icone.png'),
+                fit: BoxFit.cover,
               ),
             ),
-            SizedBox(height: 2),
-            Text(
-              'SEE EVERYTHING.',
-              style: TextStyle(
-                fontSize: 9,
-                color: AppColors.textMuted,
-                letterSpacing: 1.2,
+            if (showTitle) ...[
+              const SizedBox(width: AppSpacing.sm),
+              // title.png is 1085x246 (~4.4:1). We size it by height so
+              // it scales with the icon and never overflows the bar.
+              SizedBox(
+                height: 26,
+                child: Image.asset(
+                  'assets/images/title.png',
+                  fit: BoxFit.contain,
+                  alignment: Alignment.centerLeft,
+                ),
               ),
-            ),
+            ],
           ],
-        ),
-      ],
+        );
+      },
     );
   }
 }
