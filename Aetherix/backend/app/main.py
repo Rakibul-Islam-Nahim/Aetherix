@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.admin import router as admin_router
 from app.api.internal import router as internal_router
 from app.api.routes import router as api_router
 from app.core.config import get_settings
@@ -65,6 +66,7 @@ app.add_middleware(
 app.include_router(api_router)
 app.include_router(mcp_router)
 app.include_router(internal_router)
+app.include_router(admin_router)
 
 
 # Serve the Flutter web build if /app/static exists.

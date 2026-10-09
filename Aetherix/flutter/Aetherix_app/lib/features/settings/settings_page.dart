@@ -1,9 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/alerts/alert_preferences.dart';
-import '../../core/network/dio_config.dart';
 import '../../core/theme/app_theme.dart';
+import '../admin/admin_login_page.dart';
 
 /// User-facing settings. **Only** contains alert preferences — the API
 /// endpoint and other operator-only knobs have moved to the admin
@@ -97,7 +99,7 @@ class SettingsPage extends ConsumerWidget {
           const SizedBox(height: AppSpacing.lg),
           const _Section(title: 'ABOUT'),
           const SizedBox(height: AppSpacing.xs),
-          const _AboutTile(
+          const _SecretVersionTile(
             icon: Icons.bolt_outlined,
             label: 'AETHERIX',
             value: 'V1.1.0',
@@ -388,6 +390,114 @@ class _AboutTile extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// About row that doubles as the secret entry into the admin panel.
+///
+/// Seven taps within [_tapWindow] open [AdminLoginPage]. Anything less
+/// (or too slow) just resets silently — there is no visible state until
+/// the threshold is hit, so the gesture stays inconspicuous in normal
+/// use.
+class _SecretVersionTile extends StatefulWidget {
+  const _SecretVersionTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+  final IconData icon;
+  final String label;
+  final String value;
+
+  static const int _tapsRequired = 7;
+  static const Duration _tapWindow = Duration(seconds: 3);
+
+  @override
+  State<_SecretVersionTile> createState() => _SecretVersionTileState();
+}
+
+class _SecretVersionTileState extends State<_SecretVersionTile> {
+  int _count = 0;
+  DateTime? _firstTapAt;
+  Timer? _resetTimer;
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
+
+  void _handleTap() {
+    final now = DateTime.now();
+    if (_firstTapAt == null ||
+        now.difference(_firstTapAt!) > _SecretVersionTile._tapWindow) {
+      _firstTapAt = now;
+      _count = 1;
+    } else {
+      _count += 1;
+    }
+    _resetTimer?.cancel();
+    _resetTimer = Timer(_SecretVersionTile._tapWindow, _reset);
+    if (_count >= _SecretVersionTile._tapsRequired) {
+      _reset();
+      _openAdmin();
+    }
+  }
+
+  void _reset() {
+    _resetTimer?.cancel();
+    _resetTimer = null;
+    if (_count != 0 || _firstTapAt != null) {
+      setState(() {
+        _count = 0;
+        _firstTapAt = null;
+      });
+    }
+  }
+
+  Future<void> _openAdmin() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AdminLoginPage()),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: _handleTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(AppRadii.small),
+        ),
+        child: Row(
+          children: [
+            Icon(widget.icon, size: 14, color: AppColors.lime),
+            const SizedBox(width: AppSpacing.sm),
+            MonoText(widget.label, color: AppColors.textMuted, size: 11),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Text(
+                widget.value,
+                textAlign: TextAlign.right,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

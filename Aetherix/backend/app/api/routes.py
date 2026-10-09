@@ -79,13 +79,43 @@ async def register_device(
     If the username (device name) is new, we create a User. Otherwise we
     return the existing user. The Flutter client then stores the JWT and
     re-uses it for every subsequent request.
+
+    If the matching User has been blocked by the admin (``is_active`` is
+    False), refuse with 403. The client sees a permanent auth failure
+    until the admin unblocks.
     """
     stmt = select(User).where(User.username == body.name)
     user = (await session.execute(stmt)).scalar_one_or_none()
+    if user is not None and not user.is_active:
+        # Blocked user. Reject with a stable 403 so the client can
+        # distinguish from "no token yet".
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is blocked",
+        )
     if user is None:
         user = User(username=body.name, is_active=True)
         session.add(user)
         await session.flush()
+    # Persist the most recent Device row so the admin panel can show
+    # "last seen" + device model. The original code path only created
+    # users, never devices; we keep that for backward compat.
+    try:
+        from app.models.orm import Device
+        device = Device(
+            user_id=user.id,
+            name=body.name,
+            platform=body.platform,
+            model=body.model,
+            token_hash="pending",  # placeholder, real token is JWT, not stored
+            last_seen_at=datetime.now(timezone.utc),
+        )
+        session.add(device)
+    except Exception as exc:  # noqa: BLE001
+        # Don't fail registration if Device persistence has an issue;
+        # log and continue.
+        from app.core.logging import get_logger
+        get_logger("aetherix.auth").warning("device_persist_skipped", error=str(exc))
     settings = get_settings()
     token = create_access_token(subject=str(user.id))
     await session.commit()

@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     # Puku worker token (separate from Flutter users, per docs §35)
     puku_worker_token: str = Field(default="dev-only-puku-token", alias="PUKU_WORKER_TOKEN")
 
+    # Admin panel password (separate from JWT — short-lived admin login)
+    # Production deployments MUST set ADMIN_PASSWORD in .env.
+    admin_password: str = Field(
+        default="nextProjectOrcus", alias="ADMIN_PASSWORD"
+    )
+
     # Misc
     backend_public_url: str = Field(
         default="http://localhost:8000", alias="BACKEND_PUBLIC_URL"
