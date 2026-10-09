@@ -440,19 +440,16 @@ class _Sidebar extends StatelessWidget {
 class _BrandMark extends StatelessWidget {
   const _BrandMark();
 
-  /// Widths below which we have to collapse the lockup. Three states
-  /// driven by ``LayoutBuilder.maxWidth``:
-  ///   - ``>= 340``: full horizontal lockup (icon + title side-by-side)
-  ///   - ``220..339``: stacked — icon centered above title (common in
-  ///     narrow sidebars/drawers)
-  ///   - ``< 220``: icon only (mobile top bar where hamburger + bell
-  ///     leave no room)
-  static const _fullLockupBreakpoint = 340.0;
-  static const _iconOnlyBreakpoint = 220.0;
+  /// Widths below which the horizontal lockup doesn't fit. The mobile
+  /// top bar is `Expanded(child: brand)` between a 48px hamburger and
+  /// a 48px bell, leaving ~248px on a 360px phone — well above this
+  /// threshold, so the homepage always shows the full horizontal
+  /// lockup with both icon and title.
+  static const _stackedBreakpoint = 200.0;
 
   /// Title width when stacked. The borderless title.png is ~6.7:1, so
-  /// 200px wide → 30px tall — clearly readable on a phone screen.
-  static const _stackedTitleWidth = 200.0;
+  /// 180px wide → 27px tall — readable in the most cramped layouts.
+  static const _stackedTitleWidth = 180.0;
 
   @override
   Widget build(BuildContext context) {
@@ -460,33 +457,21 @@ class _BrandMark extends StatelessWidget {
       builder: (context, c) {
         final w = c.maxWidth;
 
-        if (w < _iconOnlyBreakpoint) {
-          // Tight space (mobile top bar). Just the icon.
-          return const AnimatedRingBorder(
-            size: 40,
-            child: Image(
-              image: AssetImage('assets/images/Icone.png'),
-              fit: BoxFit.cover,
-            ),
-          );
-        }
-
-        if (w < _fullLockupBreakpoint) {
-          // Moderate space (sidebar/drawer). Stack the icon over the
-          // title so the title can run at full ~200px width without
-          // competing with the icon for horizontal room.
+        if (w < _stackedBreakpoint) {
+          // Truly cramped (sub-200px) — vertical stack so neither
+          // element gets squished.
           return Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: const [
               AnimatedRingBorder(
-                size: 56,
+                size: 48,
                 child: Image(
                   image: AssetImage('assets/images/Icone.png'),
                   fit: BoxFit.cover,
                 ),
               ),
-              SizedBox(height: AppSpacing.sm),
+              SizedBox(height: AppSpacing.xs),
               SizedBox(
                 width: _stackedTitleWidth,
                 child: Image(
@@ -498,7 +483,16 @@ class _BrandMark extends StatelessWidget {
           );
         }
 
-        // Wide top bar / tablet — full horizontal lockup.
+        // Mobile top bar, sidebar, drawer, wide top bar — all use the
+        // same horizontal lockup. Sizes are fixed; on the homepage
+        // (mobile top bar) the bar is `Expanded` so the lockup gets
+        // whatever horizontal room is left after the hamburger + bell.
+        // The title is wrapped in `Flexible` so it shrinks instead of
+        // overflowing when the bar is narrow (e.g. on a 360px phone
+        // the available width is ~248px and the title at 36px tall
+        // would otherwise be ~241px wide — Flexible keeps the layout
+        // inside the available space and `BoxFit.contain` keeps the
+        // wordmark proportional).
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -510,12 +504,14 @@ class _BrandMark extends StatelessWidget {
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
-            SizedBox(
-              height: 36,
-              child: Image.asset(
-                'assets/images/title.png',
-                fit: BoxFit.contain,
-                alignment: Alignment.centerLeft,
+            Flexible(
+              child: SizedBox(
+                height: 36,
+                child: Image.asset(
+                  'assets/images/title.png',
+                  fit: BoxFit.contain,
+                  alignment: Alignment.centerLeft,
+                ),
               ),
             ),
           ],
