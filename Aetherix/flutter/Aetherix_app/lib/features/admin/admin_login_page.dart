@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/admin/admin_api.dart';
 import '../../core/admin/admin_session.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/ui/toast.dart';
 import 'admin_panel_page.dart';
 
 /// Password gate for the admin panel. Receives the typed password,
@@ -52,13 +53,23 @@ class _AdminLoginPageState extends ConsumerState<AdminLoginPage> {
         MaterialPageRoute(builder: (_) => const AdminPanelPage()),
       );
     } on DioException catch (e) {
+      // Inline form gets a short label; the global banner shows the
+      // full server detail / status code so the user can tell exactly
+      // why it failed (the previous build only showed a truncated
+      // e.message which was often empty or just "Http status error").
+      final code = e.response?.statusCode;
       setState(() {
-        _error = e.response?.statusCode == 401
-            ? 'Invalid password'
-            : 'Login failed: ${e.message}';
+        _error = switch (code) {
+          401 => 'Invalid password',
+          403 => 'Access denied',
+          null => 'Network error — check your connection',
+          _ => 'Login failed ($code)',
+        };
       });
+      showDioErrorToast(ref, e, id: 'admin.login');
     } catch (e) {
       setState(() => _error = 'Login failed: $e');
+      showErrorToast(ref, 'LOGIN FAILED', body: e.toString(), id: 'admin.login');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

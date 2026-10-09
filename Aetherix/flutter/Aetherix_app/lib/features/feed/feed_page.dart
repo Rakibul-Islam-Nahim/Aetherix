@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/alerts/alert_delivery.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/article.dart';
 import '../../services/news_service.dart';
@@ -41,9 +42,31 @@ final _feedNewsProvider =
       to: today,
       limit: 100,
     );
-    return ref.watch(newsServiceProvider).list(filter: filter);
+    final articles = await ref.watch(newsServiceProvider).list(filter: filter);
+    // Fire a local notification for each article that matches the
+    // user's alert preferences. We do this here (not in a ref.listen
+    // on the consumer side) so notifications fire even when the user
+    // is on a different page and the feed provider is being kept
+    // warm by a refresh.
+    final delivery = ref.read(alertDeliveryProvider);
+    for (final a in articles) {
+      // Best-effort — no await: we don't want a slow notification
+      // post to block the next article, and the service already
+      // short-circuits if permission is missing.
+      // ignore: discarded_futures
+      delivery.checkAndNotify(_snapshotOf(a));
+    }
+    return articles;
   },
 );
+
+ArticleSnapshot _snapshotOf(ArticleSummary a) => ArticleSnapshot(
+      id: a.id,
+      title: a.title,
+      tag: a.tag,
+      importanceScore: a.importanceScore,
+      summary: null,
+    );
 
 /// Filter-driven intelligence feed with a collapsing app bar.
 ///

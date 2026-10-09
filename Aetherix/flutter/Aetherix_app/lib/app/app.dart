@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/alerts/notification_service.dart';
 import '../core/auth/auth_service.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/toast_overlay.dart';
 import '../features/archive/archive_page.dart';
 import '../features/bookmarks/bookmarks_page.dart';
 import '../features/feed/feed_page.dart';
@@ -108,6 +110,13 @@ class AetherixApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Initialize the notification plugin once at startup. The service
+    // is idempotent, so this is safe even if `build` re-runs.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ignore: discarded_futures
+      ref.read(notificationServiceProvider).init();
+    });
+
     final router = ref.watch(routerProvider);
     final auth = ref.watch(authBootstrapProvider);
     return MaterialApp.router(
@@ -116,11 +125,13 @@ class AetherixApp extends ConsumerWidget {
       theme: AppTheme.dark,
       routerConfig: router,
       builder: (context, child) {
-        return HackerBackdrop(
-          child: auth.when(
-            loading: () => const _SplashScreen(),
-            error: (e, _) => _ErrorScreen(error: e.toString()),
-            data: (_) => child ?? const SizedBox.shrink(),
+        return ToastOverlay(
+          child: HackerBackdrop(
+            child: auth.when(
+              loading: () => const _SplashScreen(),
+              error: (e, _) => _ErrorScreen(error: e.toString()),
+              data: (_) => child ?? const SizedBox.shrink(),
+            ),
           ),
         );
       },

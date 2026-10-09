@@ -28,6 +28,13 @@ class AppColors {
   static const critical = Color(0xFFE53935);
   static const warning = Color(0xFFFFB300);
   static const info = Color(0xFF6FA8DC);
+
+  // Toast palette — softer than the harsh semantic colors so banners
+  // don't feel like alarm panels, but still clearly red/amber/lime.
+  static const danger = Color(0xFFE85D75);
+  static const dangerDim = Color(0xFF4A1F26);
+  static const successDim = Color(0xFF1F4A1F);
+  static const warningDim = Color(0xFF4A3F1F);
 }
 
 /// Spacing scale — use these everywhere for rhythm.

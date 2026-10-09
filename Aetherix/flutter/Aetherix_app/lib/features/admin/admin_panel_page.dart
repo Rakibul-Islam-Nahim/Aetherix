@@ -7,6 +7,7 @@ import '../../core/admin/admin_api.dart';
 import '../../core/admin/admin_session.dart';
 import '../../core/network/dio_config.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/ui/toast.dart';
 import 'admin_login_page.dart';
 
 /// Aetherix admin panel — operator-only.
@@ -52,9 +53,7 @@ class _AdminPanelPageState extends ConsumerState<AdminPanelPage> {
         .read(apiBaseUrlProvider.notifier)
         .set(_apiCtrl.text.trim());
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('API endpoint saved')),
-    );
+    showSuccessToast(ref, 'API ENDPOINT SAVED');
   }
 
   Future<void> _logout() async {
@@ -493,18 +492,20 @@ class _DeviceRow extends ConsumerWidget {
     try {
       await action();
       onChanged();
+      // Note: the global Dio interceptor already surfaces a banner
+      // with the full server detail on failure, so we don't double up
+      // a snackbar here. We do, however, still want a confirmation
+      // toast on success for block/unblock/delete.
+      showSuccessToast(ref, 'ACTION COMPLETED');
     } on DioException catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Action failed: ${e.response?.statusCode ?? e.message}'),
-        ),
-      );
+      // The interceptor already posted a banner; this extra call uses
+      // the same id so it won't duplicate. We re-call only to give a
+      // short inline form-style summary if the banner was dismissed.
+      showDioErrorToast(ref, e, id: 'admin.action');
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Action failed: $e')),
-      );
+      showErrorToast(ref, 'ACTION FAILED', body: e.toString());
     }
   }
 
