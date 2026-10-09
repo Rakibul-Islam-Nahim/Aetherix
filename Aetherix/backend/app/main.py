@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.core.database import AsyncSessionLocal, Base, engine
 from app.core.logging import configure_logging, get_logger
 from app.mcp.server import router as mcp_router
-from app.services import seed_service
+from app.services import cleanup_service, seed_service
 
 configure_logging(get_settings().log_level)
 logger = get_logger("aetherix.backend")
@@ -37,6 +37,14 @@ async def lifespan(app: FastAPI):
                     logger.info("aetherix_seeded_sources", count=inserted)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("aetherix_seed_failed", error=str(exc))
+            # Monthly retention — best-effort. Failures here should not
+            # stop the API from coming up.
+            try:
+                async with AsyncSessionLocal() as s:
+                    report = await cleanup_service.cleanup_old_articles(s)
+                logger.info("aetherix_cleanup_at_boot", **report)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("aetherix_cleanup_at_boot_failed", error=str(exc))
             logger.info("aetherix_backend_ready_db_ok")
         except Exception as exc:  # noqa: BLE001
             logger.warning("aetherix_backend_ready_no_db", error=str(exc))

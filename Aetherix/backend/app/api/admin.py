@@ -232,3 +232,22 @@ async def delete_device(
     await session.delete(device)
     await session.commit()
     logger.info("device_deleted", device_id=device_id)
+
+
+@router.post("/cleanup")
+async def trigger_cleanup(
+    session: AsyncSession = Depends(get_session),
+    _admin: dict = Depends(require_admin),
+) -> dict:
+    """Run the monthly retention job on demand.
+
+    Deletes every article with ``published_at`` before the 1st of
+    the current month, except for articles that are still bookmarked
+    by at least one user. Returns a small report (cutoff, eligible
+    count, deleted count).
+    """
+    from app.services.cleanup_service import cleanup_old_articles
+
+    report = await cleanup_old_articles(session)
+    logger.info("admin_cleanup", **report)
+    return report

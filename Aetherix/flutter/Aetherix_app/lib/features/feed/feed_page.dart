@@ -9,6 +9,7 @@ import '../../services/news_service.dart';
 import '../../widgets/article_card.dart';
 import '../../widgets/filter_bar.dart';
 import '../../widgets/hive_effects.dart';
+import '../../widgets/measure_size.dart';
 
 /// Returns ``YYYY-MM-DD`` for today (local time). Kept as a top-level
 /// helper so the same string format is used everywhere the feed needs
@@ -386,28 +387,7 @@ class _CollapsingAppBar extends StatelessWidget {
 ///
 /// Used by the feed's floating app bar so the list reservation tracks
 /// the real height (hero + divider + filter bar), not a static constant.
-class MeasureSize extends StatefulWidget {
-  const MeasureSize({super.key, required this.onChange, required this.child});
-  final ValueChanged<Size> onChange;
-  final Widget child;
-
-  @override
-  State<MeasureSize> createState() => _MeasureSizeState();
-}
-
-class _MeasureSizeState extends State<MeasureSize> {
-  @override
-  Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final box = context.findRenderObject() as RenderBox?;
-      if (box != null && box.hasSize) {
-        widget.onChange(box.size);
-      }
-    });
-    return widget.child;
-  }
-}
+/// Moved to widgets/measure_size.dart so the archive page can use it too.
 
 class _HeroContent extends StatelessWidget {
   const _HeroContent({

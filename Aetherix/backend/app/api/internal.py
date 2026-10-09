@@ -70,3 +70,21 @@ async def reseed_sources(
     inserted = await seed_service.seed_default_sources(session)
     await session.commit()
     return {"inserted": inserted}
+
+
+@router.post("/cleanup")
+async def cleanup(
+    session: DBSession,
+    _: bool = Depends(require_puku_worker),
+) -> dict:
+    """Run the monthly retention job.
+
+    Deletes every article with ``published_at`` before the 1st of the
+    current UTC month, except for articles still referenced by at
+    least one bookmark. Cron triggers this daily at 00:05 — it's a
+    no-op on most days because nothing is older than the cut-off.
+    """
+    from app.services import cleanup_service
+
+    report = await cleanup_service.cleanup_old_articles(session)
+    return report

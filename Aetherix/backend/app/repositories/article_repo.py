@@ -202,13 +202,23 @@ async def add_bookmark(
 
 async def list_bookmarks_for_user(
     session: AsyncSession, user_id: int
-) -> Sequence[Bookmark]:
+) -> Sequence:
+    """Return rows of (bookmark, article_title, article_canonical_url)
+    for the given user, newest first.
+
+    We pull title + url in the same query (left join) so the client
+    can render bookmark rows without a follow-up fetch per item.
+    Articles deleted by the retention job cascade their bookmarks
+    away, so a missing article is normally impossible — but the
+    outer join is still defensive.
+    """
     stmt = (
-        select(Bookmark)
+        select(Bookmark, Article.title, Article.canonical_url)
+        .join(Article, Article.id == Bookmark.article_id, isouter=True)
         .where(Bookmark.user_id == user_id)
         .order_by(Bookmark.created_at.desc())
     )
-    return (await session.execute(stmt)).scalars().all()
+    return (await session.execute(stmt)).all()
 
 
 async def delete_bookmark(
