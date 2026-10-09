@@ -95,6 +95,13 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
   // being rebuilt on every pixel.
   final ValueNotifier<double> _collapse = ValueNotifier<double>(0);
 
+  /// Measured height of the floating app bar (hero + divider + filter
+  /// bar). Updated by the bar itself in a post-frame callback so the
+  /// list reservation can match it exactly. Without this measurement
+  /// the first article gets hidden underneath the bar because the
+  /// static `headerHeight` constant doesn't include the filter bar.
+  final ValueNotifier<double> _barHeight = ValueNotifier<double>(0);
+
   /// Real "last refreshed" timestamp. Updated whenever fresh data
   /// arrives (via ref.listen) or when the user hits the refresh
   /// button. epoch = "never loaded yet", rendered as ``—``.
@@ -104,6 +111,7 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
   @override
   void dispose() {
     _lastUpdated.dispose();
+    _barHeight.dispose();
     _collapse.dispose();
     super.dispose();
   }
@@ -164,13 +172,18 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
     final total = all.length;
 
     // 160 px of content scrolls away before the search bar takes over.
+    // This is the hero's expanded height; the FilterBar always sits
+    // beneath it. The actual reservation used by the Sliver is the
+    // measured `_barHeight` (hero + divider + filter bar), updated by
+    // the bar itself after layout.
     const headerHeight = 160.0;
 
     return Stack(
       children: [
         // List sits underneath; the app bar floats on top.
-        // We push the first item below the bar by `headerHeight` so the
-        // bar doesn't cover the first row.
+        // We push the first item below the bar by the *measured* bar
+        // height (not the static headerHeight) so the filter bar
+        // never covers the first news card.
         Positioned.fill(
           child: NotificationListener<ScrollNotification>(
             onNotification: (n) {
@@ -180,32 +193,43 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
               return false;
             },
             child: RepaintBoundary(
-              child: CustomScrollView(
-                physics: const BouncingScrollPhysics(
-                  decelerationRate: ScrollDecelerationRate.normal,
-                ),
-                slivers: [
-                  // Reserve room for the floating bar.
-                  SliverToBoxAdapter(
-                    child: SizedBox(height: headerHeight + AppSpacing.sm),
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.only(
-                      left: AppSpacing.md,
-                      right: AppSpacing.md,
-                      top: AppSpacing.xs,
-                      bottom: AppSpacing.xl,
+              child: ValueListenableBuilder<double>(
+                valueListenable: _barHeight,
+                builder: (context, barHeight, _) {
+                  // Fall back to headerHeight + a generous filter-bar
+                  // estimate until the bar reports its real height.
+                  // This avoids a one-frame "card hidden" pop.
+                  final reservation = barHeight > 0
+                      ? barHeight + AppSpacing.sm
+                      : headerHeight + 140;
+                  return CustomScrollView(
+                    physics: const BouncingScrollPhysics(
+                      decelerationRate: ScrollDecelerationRate.normal,
                     ),
-                    sliver: SliverList.separated(
-                      itemCount: filtered.length,
-                      separatorBuilder: (_, __) =>
-                          const SizedBox(height: AppSpacing.sm),
-                      itemBuilder: (_, i) => RepaintBoundary(
-                        child: ArticleCard(article: filtered[i]),
+                    slivers: [
+                      // Reserve room for the floating bar.
+                      SliverToBoxAdapter(
+                        child: SizedBox(height: reservation),
                       ),
-                    ),
-                  ),
-                ],
+                      SliverPadding(
+                        padding: const EdgeInsets.only(
+                          left: AppSpacing.md,
+                          right: AppSpacing.md,
+                          top: AppSpacing.xs,
+                          bottom: AppSpacing.xl,
+                        ),
+                        sliver: SliverList.separated(
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: AppSpacing.sm),
+                          itemBuilder: (_, i) => RepaintBoundary(
+                            child: ArticleCard(article: filtered[i]),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -228,6 +252,11 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
                   visible: visible,
                   total: total,
                   lastUpdated: _lastUpdated,
+                  onHeightChanged: (h) {
+                    if ((_barHeight.value - h).abs() > 0.5) {
+                      _barHeight.value = h;
+                    }
+                  },
                   child: FilterBar(
                     criteria: widget.criteria,
                     onChanged: (c) =>
@@ -260,6 +289,7 @@ class _CollapsingAppBar extends StatelessWidget {
     required this.visible,
     required this.total,
     required this.lastUpdated,
+    required this.onHeightChanged,
     required this.child,
   });
 
@@ -269,6 +299,7 @@ class _CollapsingAppBar extends StatelessWidget {
   final int visible;
   final int total;
   final ValueNotifier<DateTime> lastUpdated;
+  final ValueChanged<double> onHeightChanged;
   final Widget child;
 
   @override
@@ -278,46 +309,79 @@ class _CollapsingAppBar extends StatelessWidget {
     final heroHeight = headerHeight * (1 - collapse);
     return Container(
       color: AppColors.bgSecondary,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // When the hero is fully collapsed, hide it entirely so the
-          // inner Column doesn't try to lay out inside a ~0-px slot and
-          // overflow. During the partial-collapse range we keep it
-          // visible so the fade-out animates smoothly.
-          Visibility(
-            visible: heroHeight > 1,
-            maintainState: true,
-            child: SizedBox(
-              width: double.infinity,
-              height: heroHeight,
-              child: ClipRect(
-                child: Opacity(
-                  opacity: heroOpacity,
-                  child: IgnorePointer(
-                    ignoring: collapse > 0.5,
-                    child: OverflowBox(
-                      alignment: Alignment.topCenter,
-                      maxHeight: double.infinity,
-                      child: _HeroContent(
-                        stats: stats,
-                        visible: visible,
-                        total: total,
-                        lastUpdated: lastUpdated,
+      // Measure the bar's real rendered height so the list reservation
+      // matches it (otherwise the FilterBar covers the first card).
+      // Post-frame callback avoids the setState-in-build error.
+      child: MeasureSize(
+        onChange: onHeightChanged,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // When the hero is fully collapsed, hide it entirely so the
+            // inner Column doesn't try to lay out inside a ~0-px slot and
+            // overflow. During the partial-collapse range we keep it
+            // visible so the fade-out animates smoothly.
+            Visibility(
+              visible: heroHeight > 1,
+              maintainState: true,
+              child: SizedBox(
+                width: double.infinity,
+                height: heroHeight,
+                child: ClipRect(
+                  child: Opacity(
+                    opacity: heroOpacity,
+                    child: IgnorePointer(
+                      ignoring: collapse > 0.5,
+                      child: OverflowBox(
+                        alignment: Alignment.topCenter,
+                        maxHeight: double.infinity,
+                        child: _HeroContent(
+                          stats: stats,
+                          visible: visible,
+                          total: total,
+                          lastUpdated: lastUpdated,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
-          ),
-          const Divider(height: 1, color: AppColors.border),
-          // Always visible - the search/filter bar.
-          child,
-        ],
+            const Divider(height: 1, color: AppColors.border),
+            // Always visible - the search/filter bar.
+            child,
+          ],
+        ),
       ),
     );
+  }
+}
+
+/// Reports its own rendered size via [onChange] after each layout pass.
+///
+/// Used by the feed's floating app bar so the list reservation tracks
+/// the real height (hero + divider + filter bar), not a static constant.
+class MeasureSize extends StatefulWidget {
+  const MeasureSize({super.key, required this.onChange, required this.child});
+  final ValueChanged<Size> onChange;
+  final Widget child;
+
+  @override
+  State<MeasureSize> createState() => _MeasureSizeState();
+}
+
+class _MeasureSizeState extends State<MeasureSize> {
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final box = context.findRenderObject() as RenderBox?;
+      if (box != null && box.hasSize) {
+        widget.onChange(box.size);
+      }
+    });
+    return widget.child;
   }
 }
 
