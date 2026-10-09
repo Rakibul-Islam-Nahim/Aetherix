@@ -16,6 +16,16 @@
          instead of hanging on a failed connect. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 
+    <!-- POST_NOTIFICATIONS is a runtime permission on Android 13+
+         (API 33+). Without it, the OS will silently drop our
+         flutter_local_notifications posts. We ask for it the first
+         time the user enables alerts in Settings. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <!-- VIBRATE is granted automatically but declared so notifications
+         can pulse on arrival. -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
+
     <application
         android:label="Aetherix"
         android:name="${applicationName}"

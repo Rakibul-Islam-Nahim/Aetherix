@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/sync/live_sync.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/article.dart';
 import '../../services/news_service.dart';
@@ -12,6 +13,13 @@ class BookmarksPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Live-sync: refresh the bookmarks list on every global tick so
+    // titles (which now come from the joined article row) update if
+    // the underlying article is edited on the backend.
+    ref.listen<LiveSync>(liveSyncProvider, (_, sync) {
+      if (sync.isRunning) ref.invalidate(bookmarksProvider);
+    });
+
     final async = ref.watch(bookmarksProvider);
     return Scaffold(
       backgroundColor: AppColors.bgPrimary,
@@ -130,9 +138,25 @@ class BookmarksPage extends ConsumerWidget {
                                 const Icon(Icons.bookmark,
                                     color: AppColors.lime, size: 16),
                                 const SizedBox(width: AppSpacing.sm),
-                                MonoText('ARTICLE #${b.articleId}',
-                                    color: AppColors.textSecondary, size: 11),
-                                const Spacer(),
+                                Expanded(
+                                  child: Text(
+                                    b.articleTitle?.trim().isNotEmpty == true
+                                        ? b.articleTitle!
+                                        : 'Article #${b.articleId}',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: b.articleTitle != null
+                                          ? AppColors.textPrimary
+                                          : AppColors.textMuted,
+                                      height: 1.3,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: AppSpacing.sm),
                                 MonoText(fmt.format(b.createdAt),
                                     color: AppColors.textMuted, size: 10),
                                 const SizedBox(width: AppSpacing.xs),
@@ -149,7 +173,9 @@ class BookmarksPage extends ConsumerWidget {
                                     ref.invalidate(bookmarksProvider);
                                     messenger.showSnackBar(SnackBar(
                                       content: Text(
-                                        'Bookmark #${b.articleId} removed',
+                                        b.articleTitle?.trim().isNotEmpty == true
+                                            ? 'Bookmark removed'
+                                            : 'Bookmark #${b.articleId} removed',
                                         style: const TextStyle(
                                             color: AppColors.bgPrimary,
                                             fontWeight: FontWeight.w600),

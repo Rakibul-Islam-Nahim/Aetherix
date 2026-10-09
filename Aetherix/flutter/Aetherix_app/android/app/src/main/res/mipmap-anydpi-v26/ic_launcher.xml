@@ -1,9 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Aetherix adaptive launcher icon (API 26+). Background uses the same
-     dark #141414 we use for the in-app splash so the icon blends with
-     the home screen. Foreground is the 432x432 Aetherix glyph, padded
-     to leave a safe zone around the system-applied mask. -->
+<!-- Aetherix adaptive launcher icon (API 26+). Background is a flat
+     dark color so the icon reads as its own tile; foreground is the
+     432x432 Icone.png, padded to fit the safe zone of the system mask. -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/launch_background" />
+    <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@drawable/ic_launcher_foreground" />
 </adaptive-icon>

@@ -98,6 +98,13 @@ class BookmarkOut(BaseModel):
     user_id: int
     article_id: int
     created_at: datetime
+    # Filled in by the list endpoint via a join with Article so the
+    # client can render the bookmark row without a follow-up fetch.
+    # Optional because the article may have been deleted by the
+    # monthly retention job; in that case the bookmark itself is
+    # removed by the cascade on the FK.
+    article_title: str | None = None
+    article_canonical_url: str | None = None
 
 
 # -------- auth (Flutter devices) --------

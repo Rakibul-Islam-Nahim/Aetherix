@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/sync/live_sync.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/article.dart';
 import '../../services/news_service.dart';
 import '../../widgets/article_card.dart';
+import '../../widgets/filter_bar.dart';
+import '../../widgets/hive_effects.dart';
+import '../../widgets/measure_size.dart';
 
 /// Selected day in the Archive. Defaults to *today* on first load.
 final _selectedDayProvider = StateProvider<DateTime?>((ref) {
@@ -18,13 +22,21 @@ final _selectedDayProvider = StateProvider<DateTime?>((ref) {
 /// it.
 final _calendarVisibleProvider = StateProvider<bool>((ref) => true);
 
-/// Visible month in the Archive calendar.
+/// Filter applied to the day's article list. Independent of the feed
+/// page's filter so navigating away doesn't reset it.
+final _archiveFilterProvider =
+    StateProvider<FilterCriteria>((ref) => const FilterCriteria());
+
+/// The archive is locked to the current month — there is no
+/// prev/next navigation. The provider exists so a future "history"
+/// mode can swap it out without changing the UI.
 final _visibleMonthProvider = StateProvider<DateTime>((ref) {
   final now = DateTime.now();
   return DateTime(now.year, now.month, 1);
 });
 
 /// Map of ``YYYY-MM-DD`` -> count of articles on that day (lazy cache).
+/// Scoped to the visible month.
 final _dayCountsProvider =
     FutureProvider.family<Map<String, int>, ({DateTime from, DateTime to})>(
   (ref, range) async {
@@ -69,9 +81,6 @@ class ArchivePage extends ConsumerWidget {
     final visible = ref.watch(_visibleMonthProvider);
     final calendarOpen = ref.watch(_calendarVisibleProvider);
 
-    // The counts map covers a wide window so the calendar can mark days
-    // with dots. Pulling the whole month at once is fine for the dataset
-    // size we expect. If articles grow huge we should page this.
     final counts = ref.watch(_dayCountsProvider((
       from: DateTime(visible.year, visible.month, 1),
       to: DateTime(visible.year, visible.month + 1, 0),
@@ -79,70 +88,351 @@ class ArchivePage extends ConsumerWidget {
 
     return Scaffold(
       backgroundColor: AppColors.bgPrimary,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _ArchiveHeader(
-            selectedDay: selected,
-            calendarOpen: calendarOpen,
-            onRecheck: () {
-              ref.read(_calendarVisibleProvider.notifier).state = true;
-            },
-          ),
-          if (calendarOpen)
-            Flexible(
-              fit: FlexFit.loose,
-              child: _CalendarPane(
-                visible: visible,
-                selected: selected,
-                countsAsync: counts,
-                onSelect: (d) {
-                  ref.read(_selectedDayProvider.notifier).state =
-                      DateTime(d.year, d.month, d.day);
-                  // Picking a day dismisses the calendar popup.
-                  ref.read(_calendarVisibleProvider.notifier).state = false;
-                },
-                onPrev: () {
-                  ref.read(_visibleMonthProvider.notifier).state =
-                      DateTime(visible.year, visible.month - 1, 1);
-                },
-                onNext: () {
-                  ref.read(_visibleMonthProvider.notifier).state =
-                      DateTime(visible.year, visible.month + 1, 1);
-                },
-              ),
-            ),
-          if (!calendarOpen && selected != null)
-            Expanded(child: _DayPane(day: selected!)),
-        ],
+      body: ArchiveBody(
+        selected: selected,
+        visible: visible,
+        calendarOpen: calendarOpen,
+        countsAsync: counts,
       ),
     );
   }
 }
 
-class _ArchiveHeader extends StatelessWidget {
-  const _ArchiveHeader({
-    required this.selectedDay,
+class ArchiveBody extends ConsumerStatefulWidget {
+  const ArchiveBody({
+    super.key,
+    required this.selected,
+    required this.visible,
     required this.calendarOpen,
-    required this.onRecheck,
+    required this.countsAsync,
   });
 
-  final DateTime? selectedDay;
+  final DateTime? selected;
+  final DateTime visible;
   final bool calendarOpen;
-  final VoidCallback onRecheck;
+  final AsyncValue<Map<String, int>> countsAsync;
+
+  @override
+  ConsumerState<ArchiveBody> createState() => _ArchiveBodyState();
+}
+
+class _ArchiveBodyState extends ConsumerState<ArchiveBody> {
+  // 0 = expanded, 1 = fully collapsed.
+  final ValueNotifier<double> _collapse = ValueNotifier<double>(0);
+  final ValueNotifier<double> _barHeight = ValueNotifier<double>(0);
+
+  // Approximate hero+filter height until the bar reports its real one.
+  // Used to seed the list reservation and to compute the scroll range.
+  static const _approxBarHeight = 200.0;
+
+  @override
+  void dispose() {
+    _collapse.dispose();
+    _barHeight.dispose();
+    super.dispose();
+  }
+
+  void _onScroll(double offset) {
+    final c = (offset / _approxBarHeight).clamp(0.0, 1.0);
+    final q = (c * 64).round() / 64;
+    if (q != _collapse.value) _collapse.value = q;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final dayLabel = selectedDay == null
-        ? null
-        : DateFormat('EEEE, MMM d').format(selectedDay!);
+    // Live-sync: invalidate both the calendar dot-counts and the
+    // selected day's article list on every global tick so the user
+    // sees new articles land in the archive without re-opening it.
+    ref.listen<LiveSync>(liveSyncProvider, (_, sync) {
+      if (!sync.isRunning) return;
+      ref.invalidate(_dayCountsProvider((
+        from: DateTime(widget.visible.year, widget.visible.month, 1),
+        to: DateTime(widget.visible.year, widget.visible.month + 1, 0),
+      )));
+      if (widget.selected != null) {
+        ref.invalidate(_dayArticlesProvider(widget.selected!));
+      }
+    });
 
+    final day = widget.selected;
+    final articlesAsync = day == null
+        ? const AsyncValue<List<ArticleSummary>>.data([])
+        : ref.watch(_dayArticlesProvider(day));
+    final filter = ref.watch(_archiveFilterProvider);
+    final headerFmt = DateFormat.yMMMMEEEEd();
+    final fmt = DateFormat('EEE MMM d  HH:mm');
+
+    return Stack(
+      children: [
+        // List of articles for the selected day, with the filter applied
+        // client-side. When the calendar is open it sits underneath
+        // the calendar sheet (which is non-scrolling).
+        Positioned.fill(
+          child: _ArchiveList(
+            calendarOpen: widget.calendarOpen,
+            articlesAsync: articlesAsync,
+            filter: filter,
+            day: day,
+            headerFmt: headerFmt,
+            fmt: fmt,
+            barHeight: _barHeight,
+            onScroll: _onScroll,
+            onOpenCalendar: () {
+              ref.read(_calendarVisibleProvider.notifier).state = true;
+            },
+            onRefresh: () async {
+              if (day != null) {
+                ref.invalidate(_dayArticlesProvider(day));
+              }
+              ref.invalidate(_dayCountsProvider((
+                from: DateTime(
+                    widget.visible.year, widget.visible.month, 1),
+                to: DateTime(
+                    widget.visible.year, widget.visible.month + 1, 0),
+              )));
+            },
+          ),
+        ),
+        // Floating app bar (hero + filter row). Scrolls away with
+        // the list so the body becomes clean.
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: RepaintBoundary(
+            child: ValueListenableBuilder<double>(
+              valueListenable: _collapse,
+              builder: (context, collapse, _) {
+                return _CollapsingArchiveBar(
+                  collapse: collapse,
+                  selectedDay: day,
+                  calendarOpen: widget.calendarOpen,
+                  onHeightChanged: (size) {
+                    final h = size.height;
+                    if ((_barHeight.value - h).abs() > 0.5) {
+                      _barHeight.value = h;
+                    }
+                  },
+                  onOpenCalendar: () {
+                    ref.read(_calendarVisibleProvider.notifier).state = true;
+                  },
+                  onFilterChanged: (c) {
+                    ref.read(_archiveFilterProvider.notifier).state = c;
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+        // Calendar sheet. Pushed in below the floating bar; non-
+        // scrolling. We measure the bar's current height so the sheet
+        // starts just under it.
+        if (widget.calendarOpen)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: ValueListenableBuilder<double>(
+              valueListenable: _barHeight,
+              builder: (context, barHeight, _) {
+                return Padding(
+                  padding: EdgeInsets.only(top: barHeight),
+                  child: _CalendarSheet(
+                    visible: widget.visible,
+                    selected: day,
+                    countsAsync: widget.countsAsync,
+                    onSelect: (d) {
+                      ref.read(_selectedDayProvider.notifier).state =
+                          DateTime(d.year, d.month, d.day);
+                      ref.read(_calendarVisibleProvider.notifier).state = false;
+                    },
+                    onClose: () {
+                      ref.read(_calendarVisibleProvider.notifier).state = false;
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ArchiveList extends ConsumerWidget {
+  const _ArchiveList({
+    required this.calendarOpen,
+    required this.articlesAsync,
+    required this.filter,
+    required this.day,
+    required this.headerFmt,
+    required this.fmt,
+    required this.barHeight,
+    required this.onScroll,
+    required this.onOpenCalendar,
+    required this.onRefresh,
+  });
+
+  final bool calendarOpen;
+  final AsyncValue<List<ArticleSummary>> articlesAsync;
+  final FilterCriteria filter;
+  final DateTime? day;
+  final DateFormat headerFmt;
+  final DateFormat fmt;
+  final ValueNotifier<double> barHeight;
+  final ValueChanged<double> onScroll;
+  final VoidCallback onOpenCalendar;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ValueListenableBuilder<double>(
+      valueListenable: barHeight,
+      builder: (context, measuredBar, _) {
+        // Reserve room for the floating bar plus a small gap.
+        // When the calendar is open we use a generous reservation
+        // (the sheet pushes content down) so the list doesn't peek
+        // through behind it.
+        final reservation = calendarOpen
+            ? MediaQuery.of(context).size.height * 0.5
+            : (measuredBar > 0
+                ? measuredBar + AppSpacing.sm
+                : _ArchiveBodyState._approxBarHeight + 60);
+        return NotificationListener<ScrollNotification>(
+          onNotification: (n) {
+            if (n is ScrollUpdateNotification && !calendarOpen) {
+              onScroll(n.metrics.pixels);
+            }
+            return false;
+          },
+          child: RefreshIndicator(
+            color: AppColors.lime,
+            backgroundColor: AppColors.surface,
+            onRefresh: onRefresh,
+            child: CustomScrollView(
+              physics: const BouncingScrollPhysics(
+                decelerationRate: ScrollDecelerationRate.normal,
+              ),
+              slivers: [
+                SliverToBoxAdapter(child: SizedBox(height: reservation)),
+                if (day == null)
+                  const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _PickADayState(),
+                  )
+                else
+                  ..._buildDaySlivers(articlesAsync, filter),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  List<Widget> _buildDaySlivers(
+    AsyncValue<List<ArticleSummary>> async,
+    FilterCriteria filter,
+  ) {
+    return [
+      SliverToBoxAdapter(
+        child: _DayHeader(
+          day: day!,
+          headerFmt: headerFmt,
+          onOpenCalendar: onOpenCalendar,
+          async: async,
+        ),
+      ),
+      ...async.when(
+        loading: () => [
+          const SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: StatusDot('LOADING DAY')),
+          ),
+        ],
+        error: (e, _) => [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
+              child: Text(
+                '$e',
+                style: const TextStyle(color: AppColors.critical),
+              ),
+            ),
+          ),
+        ],
+        data: (list) {
+          final filtered = list.where(filter.matches).toList();
+          if (filtered.isEmpty) {
+            final empty = list.isEmpty
+                ? 'NO INTELLIGENCE ON ${fmt.format(day!).toUpperCase()}'
+                : 'NO ARTICLES MATCH YOUR FILTER';
+            return [
+              SliverFillRemaining(
+                hasScrollBody: false,
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.event_busy,
+                          size: 32, color: AppColors.textMuted),
+                      const SizedBox(height: AppSpacing.sm),
+                      MonoText(
+                        empty,
+                        color: AppColors.textMuted,
+                        size: 10,
+                        letterSpacing: 1.2,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ];
+          }
+          return [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.md,
+                AppSpacing.xl,
+              ),
+              sliver: SliverList.separated(
+                itemCount: filtered.length,
+                separatorBuilder: (_, __) =>
+                    const SizedBox(height: AppSpacing.sm),
+                itemBuilder: (_, i) => RepaintBoundary(
+                  child: ArticleCard(article: filtered[i]),
+                ),
+              ),
+            ),
+          ];
+        },
+      ),
+    ];
+  }
+}
+
+class _DayHeader extends StatelessWidget {
+  const _DayHeader({
+    required this.day,
+    required this.headerFmt,
+    required this.onOpenCalendar,
+    required this.async,
+  });
+  final DateTime day;
+  final DateFormat headerFmt;
+  final VoidCallback onOpenCalendar;
+  final AsyncValue<List<ArticleSummary>> async;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
-        AppSpacing.lg,
+        AppSpacing.sm,
         AppSpacing.md,
-        AppSpacing.md,
+        AppSpacing.sm,
       ),
       decoration: const BoxDecoration(
         color: AppColors.bgSecondary,
@@ -150,50 +440,35 @@ class _ArchiveHeader extends StatelessWidget {
           bottom: BorderSide(color: AppColors.border, width: 1),
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              const StatusDot('HISTORICAL INTELLIGENCE'),
-              const Spacer(),
-              if (!calendarOpen)
-                TextButton.icon(
-                  onPressed: onRecheck,
-                  icon: const Icon(Icons.event_repeat,
-                      size: 14, color: AppColors.lime),
-                  label: const Text(
-                    'RECHECK',
-                    style: TextStyle(
-                      color: AppColors.lime,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
-                      fontSize: 11,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          const Text(
-            'ARCHIVE',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 4,
+          const StatusDot('SELECTED DAY'),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: MonoText(
+              headerFmt.format(day).toUpperCase(),
+              color: AppColors.textPrimary,
+              size: 11,
+              letterSpacing: 1.2,
+              weight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            calendarOpen
-                ? 'Pick a day. Read what happened.'
-                : (dayLabel == null
-                    ? 'No day selected.'
-                    : 'Showing: $dayLabel'),
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppColors.textMuted,
+          async.maybeWhen(
+            data: (list) => MonoText(
+              '${list.length} ARTICLES',
+              color: AppColors.lime,
+              size: 10,
+              letterSpacing: 1.0,
+              weight: FontWeight.w700,
             ),
+            orElse: () => const SizedBox.shrink(),
+          ),
+          const SizedBox(width: AppSpacing.xs),
+          IconButton(
+            tooltip: 'Open calendar',
+            icon: const Icon(Icons.calendar_today_outlined,
+                size: 14, color: AppColors.lime),
+            onPressed: onOpenCalendar,
           ),
         ],
       ),
@@ -201,107 +476,254 @@ class _ArchiveHeader extends StatelessWidget {
   }
 }
 
-class _CalendarPane extends StatelessWidget {
-  const _CalendarPane({
+class _PickADayState extends StatelessWidget {
+  const _PickADayState();
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.all(AppSpacing.xl),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.calendar_today_outlined,
+              size: 36, color: AppColors.textMuted),
+          SizedBox(height: AppSpacing.sm),
+          MonoText(
+            'PICK A DAY FROM THE CALENDAR',
+            color: AppColors.textMuted,
+            letterSpacing: 1.2,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The hero (title + status dot) plus the filter row. Both collapse
+/// together on scroll. The filter row is part of the same widget so
+/// they animate as one block.
+class _CollapsingArchiveBar extends StatelessWidget {
+  const _CollapsingArchiveBar({
+    required this.collapse,
+    required this.selectedDay,
+    required this.calendarOpen,
+    required this.onHeightChanged,
+    required this.onOpenCalendar,
+    required this.onFilterChanged,
+  });
+
+  final double collapse;
+  final DateTime? selectedDay;
+  final bool calendarOpen;
+  final ValueChanged<Size> onHeightChanged;
+  final VoidCallback onOpenCalendar;
+  final ValueChanged<FilterCriteria> onFilterChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final heroOpacity = (1 - collapse * 1.4).clamp(0.0, 1.0);
+    final heroHeight = 96.0 * (1 - collapse);
+    return Material(
+      color: AppColors.bgSecondary,
+      elevation: collapse > 0.01 ? 2 : 0,
+      shadowColor: Colors.black54,
+      child: MeasureSize(
+        onChange: onHeightChanged,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Hero — fades and shrinks on scroll. Visibility-gated so
+            // it doesn't try to lay out inside a ~0-px slot.
+            Visibility(
+              visible: heroHeight > 1,
+              maintainState: true,
+              child: SizedBox(
+                width: double.infinity,
+                height: heroHeight,
+                child: Opacity(
+                  opacity: heroOpacity,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      AppSpacing.lg,
+                      AppSpacing.md,
+                      AppSpacing.xs,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            const StatusDot('HISTORICAL INTELLIGENCE'),
+                            const Spacer(),
+                            if (!calendarOpen)
+                              TextButton.icon(
+                                onPressed: onOpenCalendar,
+                                icon: const Icon(
+                                  Icons.event_repeat,
+                                  size: 14,
+                                  color: AppColors.lime,
+                                ),
+                                label: const Text(
+                                  'RECHECK',
+                                  style: TextStyle(
+                                    color: AppColors.lime,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 1.2,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'ARCHIVE',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 4,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          calendarOpen
+                              ? 'Pick a day. Read what happened.'
+                              : (selectedDay == null
+                                  ? 'No day selected.'
+                                  : 'Showing: ${DateFormat('EEEE, MMM d').format(selectedDay!)}'),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // Filter row — slides up with the hero. Hidden when no
+            // day is selected because there's nothing to filter.
+            if (selectedDay != null && !calendarOpen)
+              FilterBar(
+                criteria: const FilterCriteria(),
+                onChanged: onFilterChanged,
+                onRefresh: () {},
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Calendar sheet that pops in below the floating bar. The month is
+/// fixed (the archive is current-month-only) so no prev/next
+/// navigation is rendered.
+class _CalendarSheet extends StatelessWidget {
+  const _CalendarSheet({
     required this.visible,
     required this.selected,
     required this.countsAsync,
     required this.onSelect,
-    required this.onPrev,
-    required this.onNext,
+    required this.onClose,
   });
+
   final DateTime visible;
   final DateTime? selected;
   final AsyncValue<Map<String, int>> countsAsync;
   final ValueChanged<DateTime> onSelect;
-  final VoidCallback onPrev;
-  final VoidCallback onNext;
+  final VoidCallback onClose;
 
   static const _weekdayLabels = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
 
   @override
   Widget build(BuildContext context) {
-    final monthLabel = DateFormat.yMMMM().format(visible);
+    final monthLabel = DateFormat.yMMMM().format(visible).toUpperCase();
     final firstWeekday = DateTime(visible.year, visible.month, 1).weekday;
-    // Monday-first grid: convert DateTime.weekday (1=Mon..7=Sun).
     final leadingBlanks = firstWeekday - 1;
     final daysInMonth = DateTime(visible.year, visible.month + 1, 0).day;
 
-    return ColoredBox(
+    return Material(
       color: AppColors.bgPrimary,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md,
-          AppSpacing.md,
-          AppSpacing.md,
-          AppSpacing.sm,
+      elevation: 4,
+      shadowColor: Colors.black87,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.5,
         ),
-        child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              IconButton(
-                tooltip: 'Previous month',
-                icon: const Icon(Icons.chevron_left, size: 18),
-                onPressed: onPrev,
-              ),
-              Expanded(
-                child: Center(
-                  child: MonoText(
-                    monthLabel.toUpperCase(),
-                    color: AppColors.textPrimary,
-                    size: 12,
-                    weight: FontWeight.w700,
-                    letterSpacing: 2,
-                  ),
-                ),
-              ),
-              IconButton(
-                tooltip: 'Next month',
-                icon: const Icon(Icons.chevron_right, size: 18),
-                onPressed: onNext,
-              ),
-            ],
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.md,
+            AppSpacing.md,
+            AppSpacing.sm,
           ),
-          const SizedBox(height: AppSpacing.xs),
-          // weekday header
-          Row(
-            children: _weekdayLabels
-                .map(
-                  (l) => Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
                     child: Center(
                       child: MonoText(
-                        l,
-                        color: AppColors.textMuted,
-                        size: 10,
-                        letterSpacing: 1.2,
+                        monthLabel,
+                        color: AppColors.textPrimary,
+                        size: 12,
+                        weight: FontWeight.w700,
+                        letterSpacing: 2,
                       ),
                     ),
                   ),
-                )
-                .toList(),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          countsAsync.when(
-            loading: () => const _CalendarSkeleton(),
-            error: (e, _) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
-              child: Text(
-                'Calendar unavailable: $e',
-                style: const TextStyle(color: AppColors.critical, fontSize: 12),
+                  IconButton(
+                    tooltip: 'Close calendar',
+                    icon: const Icon(Icons.close, size: 16),
+                    onPressed: onClose,
+                  ),
+                ],
               ),
-            ),
-            data: (counts) => _Grid(
-              visible: visible,
-              leadingBlanks: leadingBlanks,
-              daysInMonth: daysInMonth,
-              counts: counts,
-              selected: selected,
-              onSelect: onSelect,
-            ),
+              const SizedBox(height: AppSpacing.xs),
+              Row(
+                children: _weekdayLabels
+                    .map(
+                      (l) => Expanded(
+                        child: Center(
+                          child: MonoText(
+                            l,
+                            color: AppColors.textMuted,
+                            size: 10,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              countsAsync.when(
+                loading: () => const _CalendarSkeleton(),
+                error: (e, _) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+                  child: Text(
+                    'Calendar unavailable: $e',
+                    style: const TextStyle(
+                        color: AppColors.critical, fontSize: 12),
+                  ),
+                ),
+                data: (counts) => _Grid(
+                  visible: visible,
+                  leadingBlanks: leadingBlanks,
+                  daysInMonth: daysInMonth,
+                  counts: counts,
+                  selected: selected,
+                  onSelect: onSelect,
+                ),
+              ),
+            ],
           ),
-        ],
         ),
       ),
     );
@@ -459,105 +881,6 @@ class _CalendarSkeleton extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _DayPane extends ConsumerWidget {
-  const _DayPane({required this.day});
-  final DateTime day;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(_dayArticlesProvider(day));
-    final headerFmt = DateFormat.yMMMMEEEEd();
-    final bodyFmt = DateFormat('EEE MMM d  HH:mm');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.sm,
-            AppSpacing.md,
-            AppSpacing.sm,
-          ),
-          decoration: const BoxDecoration(
-            color: AppColors.bgSecondary,
-            border: Border(
-              bottom: BorderSide(color: AppColors.border, width: 1),
-            ),
-          ),
-          child: Row(
-            children: [
-              const StatusDot('SELECTED DAY'),
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: MonoText(
-                  headerFmt.format(day).toUpperCase(),
-                  color: AppColors.textPrimary,
-                  size: 11,
-                  letterSpacing: 1.2,
-                  weight: FontWeight.w700,
-                ),
-              ),
-              async.maybeWhen(
-                data: (list) => MonoText(
-                  '${list.length} ARTICLES',
-                  color: AppColors.lime,
-                  size: 10,
-                  letterSpacing: 1.0,
-                  weight: FontWeight.w700,
-                ),
-                orElse: () => const SizedBox.shrink(),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: async.when(
-            loading: () => const Center(child: StatusDot('LOADING DAY')),
-            error: (e, _) => Center(
-              child: Text(
-                '$e',
-                style: const TextStyle(color: AppColors.critical),
-              ),
-            ),
-            data: (list) {
-              if (list.isEmpty) {
-                return Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.event_busy,
-                          size: 32, color: AppColors.textMuted),
-                      const SizedBox(height: AppSpacing.sm),
-                      MonoText(
-                        'NO INTELLIGENCE ON ${bodyFmt.format(day).toUpperCase()}',
-                        color: AppColors.textMuted,
-                        size: 10,
-                        letterSpacing: 1.2,
-                      ),
-                    ],
-                  ),
-                );
-              }
-              return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.md,
-                  AppSpacing.md,
-                  AppSpacing.xl,
-                ),
-                itemCount: list.length,
-                separatorBuilder: (_, __) =>
-                    const SizedBox(height: AppSpacing.sm),
-                itemBuilder: (_, i) => ArticleCard(article: list[i]),
-              );
-            },
-          ),
-        ),
-      ],
     );
   }
 }

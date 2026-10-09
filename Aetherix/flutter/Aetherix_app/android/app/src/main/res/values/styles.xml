@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Matches AppColors.bgPrimary in Dart. Used by launch_background.xml
+         so the OS-level splash (before Flutter draws) matches the in-app
+         background instead of flashing white. -->
+    <color name="aetherix_bg_primary">#0F0F0F</color>
+
+    <!-- Adaptive launcher icon background (API 26+). Distinct from the
+         in-app background so the icon reads as its own tile, not just a
+         dark square. Aetherix dark #141414. -->
+    <color name="ic_launcher_background">#141414</color>
+
     <!-- Theme applied to the Android Window while the process is starting when the OS's Dark Mode setting is off -->
     <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
         <!-- Show a splash screen on the activity. Automatically removed when

@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/alerts/alert_delivery.dart';
 import '../../core/alerts/alert_preferences.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/ui/toast.dart';
 import '../admin/admin_login_page.dart';
 
 /// User-facing settings. **Only** contains alert preferences — the API
@@ -34,10 +36,8 @@ class SettingsPage extends ConsumerWidget {
           // ── Master switch ────────────────────────────────────────────
           const _Section(title: 'ALERTS'),
           const SizedBox(height: AppSpacing.xs),
-          _SwitchTile(
-            label: 'ENABLE ALERTS',
-            sublabel: 'Master switch for in-app notifications.',
-            value: prefs.enabled,
+          _AlertMasterTile(
+            enabled: prefs.enabled,
             onChanged: ctrl.setEnabled,
           ),
           const SizedBox(height: AppSpacing.lg),
@@ -218,6 +218,102 @@ class _SwitchTile extends StatelessWidget {
           Switch.adaptive(
             value: value,
             onChanged: onChanged,
+            activeColor: AppColors.lime,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Master "ENABLE ALERTS" switch. When the user turns it ON, asks for
+/// POST_NOTIFICATIONS permission the first time only. If the user
+/// denies, we revert the switch and surface a warning banner telling
+/// them how to fix it in system settings.
+class _AlertMasterTile extends ConsumerStatefulWidget {
+  const _AlertMasterTile({required this.enabled, required this.onChanged});
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  ConsumerState<_AlertMasterTile> createState() => _AlertMasterTileState();
+}
+
+class _AlertMasterTileState extends ConsumerState<_AlertMasterTile> {
+  bool _busy = false;
+
+  Future<void> _onChanged(bool v) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      if (v) {
+        // Turning ON — gate on OS permission.
+        final result = await ref.read(alertDeliveryProvider).ensurePermission();
+        if (result == NotificationAskResult.denied) {
+          // Permission denied (or already denied previously). Show a
+          // banner explaining how to fix, but still leave alerts ON
+          // so the in-app filtering is active for when the user
+          // grants the permission later.
+          if (mounted) {
+            showWarningToast(
+              ref,
+              'NOTIFICATIONS BLOCKED',
+              body:
+                  'Enable in Android Settings → Apps → Aetherix → Notifications.',
+            );
+          }
+        }
+      }
+      // Persist the new value either way.
+      widget.onChanged(v);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(AppRadii.small),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                MonoText(
+                  'ENABLE ALERTS',
+                  color: AppColors.textPrimary,
+                  size: 12,
+                  weight: FontWeight.w700,
+                  letterSpacing: 1.0,
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Master switch. Background alerts require notification permission.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // _busy flag isn't visually obvious on the switch itself
+          // (Android renders its own ripple), so the user gets
+          // immediate feedback via the toast above. No separate
+          // spinner needed.
+          Switch.adaptive(
+            value: widget.enabled,
+            onChanged: _busy ? null : _onChanged,
             activeColor: AppColors.lime,
           ),
         ],

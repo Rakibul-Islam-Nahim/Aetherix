@@ -2,13 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/alerts/notification_service.dart';
 import '../core/auth/auth_service.dart';
+import '../core/sync/live_sync.dart';
 import '../core/theme/app_theme.dart';
+import '../core/ui/toast_overlay.dart';
 import '../features/archive/archive_page.dart';
 import '../features/bookmarks/bookmarks_page.dart';
 import '../features/feed/feed_page.dart';
 import '../features/news/article_page.dart';
 import '../features/settings/settings_page.dart';
+import '../widgets/animated_ring_border.dart';
 import '../widgets/hive_effects.dart';
 
 /// Shared page transition: fade + small slide. Keeps the eye on the
@@ -103,11 +107,58 @@ final routerProvider = Provider<GoRouter>((ref) {
   );
 });
 
-class AetherixApp extends ConsumerWidget {
+class AetherixApp extends ConsumerStatefulWidget {
   const AetherixApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AetherixApp> createState() => _AetherixAppState();
+}
+
+class _AetherixAppState extends ConsumerState<AetherixApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    // Initialize the notification plugin once at startup. The service
+    // is idempotent, so this is safe even if `build` re-runs.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ignore: discarded_futures
+      ref.read(notificationServiceProvider).init();
+      // Start the 60s live-sync tick. The timer only runs while the
+      // app is in the foreground; on `paused` (user backgrounded) we
+      // stop it, on `resumed` we restart and fire one immediate tick
+      // so the user sees fresh data the moment they re-open.
+      ref.read(liveSyncProvider).start();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final sync = ref.read(liveSyncProvider);
+    switch (state) {
+      case AppLifecycleState.resumed:
+        sync.resume();
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        sync.pause();
+      case AppLifecycleState.inactive:
+        // Brief transitions (incoming call, system dialog). Keep
+        // the timer running so the user doesn't see a stale feed
+        // if the dialog is dismissed.
+        break;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(routerProvider);
     final auth = ref.watch(authBootstrapProvider);
     return MaterialApp.router(
@@ -116,11 +167,13 @@ class AetherixApp extends ConsumerWidget {
       theme: AppTheme.dark,
       routerConfig: router,
       builder: (context, child) {
-        return HackerBackdrop(
-          child: auth.when(
-            loading: () => const _SplashScreen(),
-            error: (e, _) => _ErrorScreen(error: e.toString()),
-            data: (_) => child ?? const SizedBox.shrink(),
+        return ToastOverlay(
+          child: HackerBackdrop(
+            child: auth.when(
+              loading: () => const _SplashScreen(),
+              error: (e, _) => _ErrorScreen(error: e.toString()),
+              data: (_) => child ?? const SizedBox.shrink(),
+            ),
           ),
         );
       },
@@ -176,28 +229,14 @@ class _SplashScreenState extends State<_SplashScreen>
               opacity: _fade,
               child: ScaleTransition(
                 scale: _scale,
-                child: Container(
-                  width: 96,
-                  height: 96,
-                  decoration: BoxDecoration(
-                    border: Border.all(color: AppColors.lime, width: 1.4),
-                    borderRadius: BorderRadius.circular(AppRadii.medium),
-                    color: AppColors.surface,
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.lime.withValues(alpha: 0.18),
-                        blurRadius: 24,
-                        spreadRadius: 1,
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.all(10),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(AppRadii.small),
-                    child: Image.asset(
-                      'assets/images/Aetherix-Icon.png',
-                      fit: BoxFit.contain,
-                    ),
+                child: const AnimatedRingBorder(
+                  size: 110,
+                  strokeWidth: 1.6,
+                  snakeLength: 0.32,
+                  duration: Duration(seconds: 4),
+                  child: Image(
+                    image: AssetImage('assets/images/Icone.png'),
+                    fit: BoxFit.cover,
                   ),
                 ),
               ),
@@ -205,14 +244,19 @@ class _SplashScreenState extends State<_SplashScreen>
             const SizedBox(height: AppSpacing.lg),
             FadeTransition(
               opacity: _fade,
-              child: const GlitchText(
-                'AETHERIX',
-                intensity: 1.4,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 6,
-                  color: AppColors.lime,
+              // title.png is borderless (transparent background) and
+              // ~6.72:1. We render it wide on the splash so the
+              // AETHERIX wordmark reads clearly even on small
+              // phones. Bounded to 88% of screen width so it never
+              // overflows on narrow devices.
+              child: FractionallySizedBox(
+                widthFactor: 0.88,
+                child: AspectRatio(
+                  aspectRatio: 1701 / 253,
+                  child: Image.asset(
+                    'assets/images/title.png',
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
             ),
@@ -436,52 +480,84 @@ class _Sidebar extends StatelessWidget {
 
 class _BrandMark extends StatelessWidget {
   const _BrandMark();
+
+  /// Widths below which the horizontal lockup doesn't fit. The mobile
+  /// top bar is `Expanded(child: brand)` between a 48px hamburger and
+  /// a 48px bell, leaving ~248px on a 360px phone — well above this
+  /// threshold, so the homepage always shows the full horizontal
+  /// lockup with both icon and title.
+  static const _stackedBreakpoint = 200.0;
+
+  /// Title width when stacked. The borderless title.png is ~6.7:1, so
+  /// 180px wide → 27px tall — readable in the most cramped layouts.
+  static const _stackedTitleWidth = 180.0;
+
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.lime, width: 1.2),
-            borderRadius: BorderRadius.circular(AppRadii.small),
-            color: AppColors.bgPrimary,
-          ),
-          padding: const EdgeInsets.all(3),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(AppRadii.small),
-            child: Image.asset(
-              'assets/images/Aetherix-Icon.png',
-              fit: BoxFit.contain,
-            ),
-          ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+
+        if (w < _stackedBreakpoint) {
+          // Truly cramped (sub-200px) — vertical stack so neither
+          // element gets squished.
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: const [
+              AnimatedRingBorder(
+                size: 48,
+                child: Image(
+                  image: AssetImage('assets/images/Icone.png'),
+                  fit: BoxFit.cover,
+                ),
+              ),
+              SizedBox(height: AppSpacing.xs),
+              SizedBox(
+                width: _stackedTitleWidth,
+                child: Image(
+                  image: AssetImage('assets/images/title.png'),
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ],
+          );
+        }
+
+        // Mobile top bar, sidebar, drawer, wide top bar — all use the
+        // same horizontal lockup. Sizes are fixed; on the homepage
+        // (mobile top bar) the bar is `Expanded` so the lockup gets
+        // whatever horizontal room is left after the hamburger + bell.
+        // The title is wrapped in `Flexible` so it shrinks instead of
+        // overflowing when the bar is narrow (e.g. on a 360px phone
+        // the available width is ~248px and the title at 36px tall
+        // would otherwise be ~241px wide — Flexible keeps the layout
+        // inside the available space and `BoxFit.contain` keeps the
+        // wordmark proportional).
+        return Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'AETHERIX',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 3,
-                color: AppColors.textPrimary,
+            const AnimatedRingBorder(
+              size: 48,
+              child: Image(
+                image: AssetImage('assets/images/Icone.png'),
+                fit: BoxFit.cover,
               ),
             ),
-            SizedBox(height: 2),
-            Text(
-              'SEE EVERYTHING.',
-              style: TextStyle(
-                fontSize: 9,
-                color: AppColors.textMuted,
-                letterSpacing: 1.2,
+            const SizedBox(width: AppSpacing.sm),
+            Flexible(
+              child: SizedBox(
+                height: 36,
+                child: Image.asset(
+                  'assets/images/title.png',
+                  fit: BoxFit.contain,
+                  alignment: Alignment.centerLeft,
+                ),
               ),
             ),
           ],
-        ),
-      ],
+        );
+      },
     );
   }
 }

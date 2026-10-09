@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../auth/token_store.dart';
+import '../ui/toast.dart';
 
 /// Reads the API base URL.
 ///
@@ -82,6 +83,8 @@ final dioProvider = Provider<Dio>((ref) {
   );
 
   // Bearer token is added by an interceptor that reads from TokenStore.
+  // Failures are surfaced to the global toast surface; the request is
+  // still rejected so the caller can render its own inline UI.
   dio.interceptors.add(
     InterceptorsWrapper(
       onRequest: (options, handler) async {
@@ -93,6 +96,17 @@ final dioProvider = Provider<Dio>((ref) {
           }
         }
         handler.next(options);
+      },
+      onError: (e, handler) {
+        // De-dupe by method+path+type so a single broken endpoint
+        // doesn't fill the screen with the same banner.
+        final id = '${e.requestOptions.method} ${e.requestOptions.path}';
+        try {
+          showDioErrorToastFromRef(ref, e, id: id);
+        } catch (_) {
+          // Provider may have been disposed during shutdown; ignore.
+        }
+        handler.next(e);
       },
     ),
   );

@@ -143,12 +143,16 @@ class Bookmark {
   final int userId;
   final int articleId;
   final DateTime createdAt;
+  final String? articleTitle;
+  final String? articleCanonicalUrl;
 
   Bookmark({
     required this.id,
     required this.userId,
     required this.articleId,
     required this.createdAt,
+    this.articleTitle,
+    this.articleCanonicalUrl,
   });
 
   factory Bookmark.fromJson(Map<String, dynamic> j) => Bookmark(
@@ -156,5 +160,7 @@ class Bookmark {
         userId: j['user_id'] as int,
         articleId: j['article_id'] as int,
         createdAt: DateTime.parse(j['created_at'] as String),
+        articleTitle: j['article_title'] as String?,
+        articleCanonicalUrl: j['article_canonical_url'] as String?,
       );
 }

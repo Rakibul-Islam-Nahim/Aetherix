@@ -279,7 +279,22 @@ async def list_user_bookmarks(
 ) -> list[BookmarkOut]:
     user_id = _user_id_from_claims(claims)
     rows = await article_repo.list_bookmarks_for_user(session, user_id)
-    return [BookmarkOut.model_validate(r) for r in rows]
+    out: list[BookmarkOut] = []
+    for row in rows:
+        bookmark, title, url = row
+        out.append(
+            BookmarkOut.model_validate(
+                {
+                    "id": bookmark.id,
+                    "user_id": bookmark.user_id,
+                    "article_id": bookmark.article_id,
+                    "created_at": bookmark.created_at,
+                    "article_title": title,
+                    "article_canonical_url": url,
+                }
+            )
+        )
+    return out
 
 
 @router.delete("/bookmarks/{article_id}")

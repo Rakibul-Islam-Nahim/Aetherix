@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../core/alerts/alert_delivery.dart';
+import '../../core/sync/live_sync.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/article.dart';
 import '../../services/news_service.dart';
 import '../../widgets/article_card.dart';
 import '../../widgets/filter_bar.dart';
 import '../../widgets/hive_effects.dart';
+import '../../widgets/measure_size.dart';
 
 /// Returns ``YYYY-MM-DD`` for today (local time). Kept as a top-level
 /// helper so the same string format is used everywhere the feed needs
@@ -41,9 +44,31 @@ final _feedNewsProvider =
       to: today,
       limit: 100,
     );
-    return ref.watch(newsServiceProvider).list(filter: filter);
+    final articles = await ref.watch(newsServiceProvider).list(filter: filter);
+    // Fire a local notification for each article that matches the
+    // user's alert preferences. We do this here (not in a ref.listen
+    // on the consumer side) so notifications fire even when the user
+    // is on a different page and the feed provider is being kept
+    // warm by a refresh.
+    final delivery = ref.read(alertDeliveryProvider);
+    for (final a in articles) {
+      // Best-effort — no await: we don't want a slow notification
+      // post to block the next article, and the service already
+      // short-circuits if permission is missing.
+      // ignore: discarded_futures
+      delivery.checkAndNotify(_snapshotOf(a));
+    }
+    return articles;
   },
 );
+
+ArticleSnapshot _snapshotOf(ArticleSummary a) => ArticleSnapshot(
+      id: a.id,
+      title: a.title,
+      tag: a.tag,
+      importanceScore: a.importanceScore,
+      summary: null,
+    );
 
 /// Filter-driven intelligence feed with a collapsing app bar.
 ///
@@ -127,6 +152,16 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
 
   @override
   Widget build(BuildContext context) {
+    // Live-sync: the global timer ticks every 60s while the app is in
+    // the foreground. Invalidate the news provider on each tick so
+    // the user sees new articles without having to pull-to-refresh.
+    // We only act when the timer is running so an in-flight ``pause``
+    // (app going to background) doesn't kick a fetch.
+    ref.listen<LiveSync>(liveSyncProvider, (_, sync) {
+      if (!sync.isRunning) return;
+      ref.invalidate(_feedNewsProvider(widget.criteria));
+    });
+
     // Stamp "last updated" on every successful load (including the
     // first one). ref.listen fires only on transitions, so this also
     // covers reloads via the FilterBar refresh button.
@@ -363,28 +398,7 @@ class _CollapsingAppBar extends StatelessWidget {
 ///
 /// Used by the feed's floating app bar so the list reservation tracks
 /// the real height (hero + divider + filter bar), not a static constant.
-class MeasureSize extends StatefulWidget {
-  const MeasureSize({super.key, required this.onChange, required this.child});
-  final ValueChanged<Size> onChange;
-  final Widget child;
-
-  @override
-  State<MeasureSize> createState() => _MeasureSizeState();
-}
-
-class _MeasureSizeState extends State<MeasureSize> {
-  @override
-  Widget build(BuildContext context) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final box = context.findRenderObject() as RenderBox?;
-      if (box != null && box.hasSize) {
-        widget.onChange(box.size);
-      }
-    });
-    return widget.child;
-  }
-}
+/// Moved to widgets/measure_size.dart so the archive page can use it too.
 
 class _HeroContent extends StatelessWidget {
   const _HeroContent({
