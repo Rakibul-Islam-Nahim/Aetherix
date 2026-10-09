@@ -203,14 +203,15 @@ class _SplashScreenState extends State<_SplashScreen>
             const SizedBox(height: AppSpacing.lg),
             FadeTransition(
               opacity: _fade,
-              // title.png is now ~6.55:1 (post-trim) and is rendered
-              // at a generous height so the AETHERIX wordmark reads
-              // clearly even on small phones. Bounded by the
-              // screen width so it never overflows.
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 320),
+              // title.png is borderless (transparent background) and
+              // ~6.72:1. We render it wide on the splash so the
+              // AETHERIX wordmark reads clearly even on small
+              // phones. Bounded to 88% of screen width so it never
+              // overflows on narrow devices.
+              child: FractionallySizedBox(
+                widthFactor: 0.88,
                 child: AspectRatio(
-                  aspectRatio: 1709 / 261,
+                  aspectRatio: 1701 / 253,
                   child: Image.asset(
                     'assets/images/title.png',
                     fit: BoxFit.contain,
@@ -439,44 +440,84 @@ class _Sidebar extends StatelessWidget {
 class _BrandMark extends StatelessWidget {
   const _BrandMark();
 
-  /// Threshold below which the brand collapses to icon-only. The
-  /// lockup (icon 44px + 8px gap + title at ~6.55:1) needs ~200px to
-  /// read well — below that we drop the title so the icon doesn't
-  /// get crushed against the hamburger/bell icons.
-  static const _lockupBreakpoint = 200.0;
+  /// Widths below which we have to collapse the lockup. Three states
+  /// driven by ``LayoutBuilder.maxWidth``:
+  ///   - ``>= 340``: full horizontal lockup (icon + title side-by-side)
+  ///   - ``220..339``: stacked — icon centered above title (common in
+  ///     narrow sidebars/drawers)
+  ///   - ``< 220``: icon only (mobile top bar where hamburger + bell
+  ///     leave no room)
+  static const _fullLockupBreakpoint = 340.0;
+  static const _iconOnlyBreakpoint = 220.0;
 
-  /// Title height in the sidebar/drawer lockup. Matches the icon
-  /// height so they balance visually. The trim of title.png (now
-  /// ~6.55:1) means it reads crisply at this size, where the old
-  /// 4.4:1 version would have been smaller.
-  static const _lockupTitleHeight = 28.0;
+  /// Title width when stacked. The borderless title.png is ~6.7:1, so
+  /// 200px wide → 30px tall — clearly readable on a phone screen.
+  static const _stackedTitleWidth = 200.0;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
-        final showTitle = c.maxWidth > _lockupBreakpoint;
+        final w = c.maxWidth;
+
+        if (w < _iconOnlyBreakpoint) {
+          // Tight space (mobile top bar). Just the icon.
+          return const AnimatedRingBorder(
+            size: 40,
+            child: Image(
+              image: AssetImage('assets/images/Icone.png'),
+              fit: BoxFit.cover,
+            ),
+          );
+        }
+
+        if (w < _fullLockupBreakpoint) {
+          // Moderate space (sidebar/drawer). Stack the icon over the
+          // title so the title can run at full ~200px width without
+          // competing with the icon for horizontal room.
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: const [
+              AnimatedRingBorder(
+                size: 56,
+                child: Image(
+                  image: AssetImage('assets/images/Icone.png'),
+                  fit: BoxFit.cover,
+                ),
+              ),
+              SizedBox(height: AppSpacing.sm),
+              SizedBox(
+                width: _stackedTitleWidth,
+                child: Image(
+                  image: AssetImage('assets/images/title.png'),
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ],
+          );
+        }
+
+        // Wide top bar / tablet — full horizontal lockup.
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             const AnimatedRingBorder(
-              size: 44,
+              size: 48,
               child: Image(
                 image: AssetImage('assets/images/Icone.png'),
                 fit: BoxFit.cover,
               ),
             ),
-            if (showTitle) ...[
-              const SizedBox(width: AppSpacing.sm),
-              SizedBox(
-                height: _lockupTitleHeight,
-                child: Image.asset(
-                  'assets/images/title.png',
-                  fit: BoxFit.contain,
-                  alignment: Alignment.centerLeft,
-                ),
+            const SizedBox(width: AppSpacing.sm),
+            SizedBox(
+              height: 36,
+              child: Image.asset(
+                'assets/images/title.png',
+                fit: BoxFit.contain,
+                alignment: Alignment.centerLeft,
               ),
-            ],
+            ),
           ],
         );
       },
