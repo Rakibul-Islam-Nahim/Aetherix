@@ -104,12 +104,40 @@ class BookmarkOut(BaseModel):
 class DeviceRegisterIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     platform: Literal["android", "windows", "ios", "web", "linux", "macos"]
+    # Optional human-readable device model (e.g. "Pixel 7 Pro", "Galaxy S24").
+    # Stored on the Device row so the admin panel can show "whose device".
+    model: str | None = Field(default=None, max_length=120)
 
 
 class DeviceRegisterOut(BaseModel):
     user_id: int
     access_token: str
     expires_in_minutes: int
+
+
+# -------- admin --------
+class AdminLoginIn(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+
+
+class AdminLoginOut(BaseModel):
+    access_token: str
+    expires_in_minutes: int
+
+
+class DeviceAdminOut(BaseModel):
+    """One row in the admin device list."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    platform: str
+    model: str | None = None
+    user_id: int
+    username: str
+    user_blocked: bool
+    last_seen_at: datetime | None
+    created_at: datetime
 
 
 # -------- search --------

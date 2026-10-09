@@ -145,6 +145,9 @@ class Device(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     platform: Mapped[str] = mapped_column(String(40), nullable=False)  # android, windows
+    # Human-readable device model reported by the client (e.g. "Pixel 7 Pro").
+    # Nullable so older clients and CLI workers can register without it.
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
     token_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

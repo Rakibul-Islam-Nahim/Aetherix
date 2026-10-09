@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../device/device_info.dart';
 import '../network/dio_config.dart';
 import 'token_store.dart';
 
@@ -10,16 +11,23 @@ class AuthService {
   final TokenStore _store;
 
   /// Returns a usable JWT, registering a fresh device on first call.
+  ///
+  /// Sends the human-readable device model string so the admin panel
+  /// can show "Pixel 7 Pro" instead of "android".
   Future<String> ensureToken({
     required String deviceName,
-    String devicePlatform = 'android',
+    String? devicePlatform,
   }) async {
     final cached = await _store.read();
     if (cached != null && cached.isNotEmpty) return cached;
 
     final r = await _dio.post<Map<String, dynamic>>(
       '/auth/register-device',
-      data: {'name': deviceName, 'platform': devicePlatform},
+      data: {
+        'name': deviceName,
+        'platform': devicePlatform ?? DeviceInfo.platformName(),
+        'model': DeviceInfo.modelLabel(),
+      },
     );
     final body = r.data!;
     final token = body['access_token'] as String;
@@ -48,7 +56,6 @@ final authServiceProvider = Provider<AuthService>((ref) {
 final authBootstrapProvider = FutureProvider<void>((ref) async {
   final auth = ref.read(authServiceProvider);
   await auth.ensureToken(
-    deviceName: 'nahim-phone',
-    devicePlatform: 'android',
+    deviceName: DeviceInfo.defaultUserName(),
   );
 });

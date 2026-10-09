@@ -40,6 +40,7 @@ services:
       PUKU_WORKER_TOKEN: ${PUKU_WORKER_TOKEN}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       BACKEND_PUBLIC_URL: ${BACKEND_PUBLIC_URL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
     ports:
       # cloudflared reaches the backend on 8000 INSIDE the docker network.
       # Exposing to host is optional; tunnel does the heavy lifting.
