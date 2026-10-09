@@ -203,15 +203,18 @@ class _SplashScreenState extends State<_SplashScreen>
             const SizedBox(height: AppSpacing.lg),
             FadeTransition(
               opacity: _fade,
-              // title.png is 1085x246 (~4.4:1). We render it at a
-              // fixed height so it stays consistent across phone
-              // sizes; the parent Center keeps it visually centered
-              // under the icon.
-              child: SizedBox(
-                height: 64,
-                child: Image.asset(
-                  'assets/images/title.png',
-                  fit: BoxFit.contain,
+              // title.png is now ~6.55:1 (post-trim) and is rendered
+              // at a generous height so the AETHERIX wordmark reads
+              // clearly even on small phones. Bounded by the
+              // screen width so it never overflows.
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: AspectRatio(
+                  aspectRatio: 1709 / 261,
+                  child: Image.asset(
+                    'assets/images/title.png',
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
             ),
@@ -436,10 +439,17 @@ class _Sidebar extends StatelessWidget {
 class _BrandMark extends StatelessWidget {
   const _BrandMark();
 
-  /// Threshold below which the brand collapses to icon-only. The full
-  /// lockup is roughly 4.4:1 (title.png) and the top bar is too tight
-  /// at sub-220px for it to read well — so we hide the title there.
+  /// Threshold below which the brand collapses to icon-only. The
+  /// lockup (icon 44px + 8px gap + title at ~6.55:1) needs ~200px to
+  /// read well — below that we drop the title so the icon doesn't
+  /// get crushed against the hamburger/bell icons.
   static const _lockupBreakpoint = 200.0;
+
+  /// Title height in the sidebar/drawer lockup. Matches the icon
+  /// height so they balance visually. The trim of title.png (now
+  /// ~6.55:1) means it reads crisply at this size, where the old
+  /// 4.4:1 version would have been smaller.
+  static const _lockupTitleHeight = 28.0;
 
   @override
   Widget build(BuildContext context) {
@@ -450,7 +460,7 @@ class _BrandMark extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             const AnimatedRingBorder(
-              size: 36,
+              size: 44,
               child: Image(
                 image: AssetImage('assets/images/Icone.png'),
                 fit: BoxFit.cover,
@@ -458,10 +468,8 @@ class _BrandMark extends StatelessWidget {
             ),
             if (showTitle) ...[
               const SizedBox(width: AppSpacing.sm),
-              // title.png is 1085x246 (~4.4:1). We size it by height so
-              // it scales with the icon and never overflows the bar.
               SizedBox(
-                height: 26,
+                height: _lockupTitleHeight,
                 child: Image.asset(
                   'assets/images/title.png',
                   fit: BoxFit.contain,
