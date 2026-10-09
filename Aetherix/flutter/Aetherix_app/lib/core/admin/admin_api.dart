@@ -4,6 +4,23 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../network/dio_config.dart';
 import 'admin_session.dart';
 
+/// Strips a trailing ``/api/v1`` from the public base URL so admin
+/// calls hit the server root.
+///
+/// The user-facing API is mounted at ``/api/v1`` but admin routes
+/// (``/admin/*``) live at the root — historically the admin client
+/// was mistakenly built on top of the public base, which produced
+/// 405s when the request reached ``/api/v1/admin/login``.
+String _adminBase(String publicBase) {
+  if (publicBase.endsWith('/api/v1')) {
+    return publicBase.substring(0, publicBase.length - '/api/v1'.length);
+  }
+  if (publicBase.endsWith('/api/v1/')) {
+    return publicBase.substring(0, publicBase.length - '/api/v1/'.length);
+  }
+  return publicBase;
+}
+
 /// One device row, as returned by GET /admin/devices.
 class AdminDevice {
   const AdminDevice({
@@ -58,7 +75,7 @@ class AdminApi {
   final Ref _ref;
 
   Dio _build() {
-    final base = _ref.read(apiBaseUrlProvider);
+    final base = _adminBase(_ref.read(apiBaseUrlProvider));
     final session = _ref.read(adminSessionProvider);
     return Dio(
       BaseOptions(

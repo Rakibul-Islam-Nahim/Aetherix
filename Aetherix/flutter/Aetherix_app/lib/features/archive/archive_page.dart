@@ -45,7 +45,7 @@ final _dayCountsProvider =
       filter: NewsListFilter(
         from: fmt.format(range.from),
         to: fmt.format(range.to),
-        limit: 500,
+        limit: 200,
       ),
     );
     final out = <String, int>{};
@@ -66,7 +66,7 @@ final _dayArticlesProvider =
         filter: NewsListFilter(
           from: fmt.format(day),
           to: fmt.format(day),
-          limit: 500,
+          limit: 200,
         ),
       );
 });
