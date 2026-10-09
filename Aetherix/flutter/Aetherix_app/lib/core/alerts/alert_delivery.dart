@@ -123,4 +123,4 @@ class ArticleSnapshot {
 }
 
 final alertDeliveryProvider =
-    Provider<AlertDelivery>(AlertDelivery.new);
+    Provider<AlertDelivery>((ref) => AlertDelivery(ref));

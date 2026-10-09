@@ -102,7 +102,7 @@ final dioProvider = Provider<Dio>((ref) {
         // doesn't fill the screen with the same banner.
         final id = '${e.requestOptions.method} ${e.requestOptions.path}';
         try {
-          showDioErrorToast(ref, e, id: id);
+          showDioErrorToastFromRef(ref, e, id: id);
         } catch (_) {
           // Provider may have been disposed during shutdown; ignore.
         }

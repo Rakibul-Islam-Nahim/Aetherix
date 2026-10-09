@@ -85,9 +85,16 @@ class ToastController extends StateNotifier<List<Toast>> {
 }
 
 final toastControllerProvider =
-    StateNotifierProvider<ToastController, List<Toast>>(ToastController.new);
+    StateNotifierProvider<ToastController, List<Toast>>(
+  (ref) => ToastController(),
+);
 
 // ── Convenience helpers ──────────────────────────────────────────────
+
+/// Post a toast from a widget context (ConsumerWidget, ConsumerState,
+/// etc). For non-widget contexts (e.g. a Dio interceptor inside a
+/// `Provider<Dio>`) use the `*FromRef` variants below — they take the
+/// bare Riverpod `Ref` instead of a `WidgetRef`.
 
 void showErrorToast(
   WidgetRef ref,
@@ -135,6 +142,44 @@ void showInfoToast(
   String? body,
   Object? id,
 }) {
+  ref.read(toastControllerProvider.notifier).post(
+        Toast(title: title, body: body, kind: ToastKind.info, id: id),
+      );
+}
+
+// ── Non-widget variants (for use inside Providers / Interceptors) ────
+
+void showErrorToastFromRef(
+  Ref ref,
+  String title, {
+  String? body,
+  Object? id,
+  Duration? duration,
+}) {
+  ref.read(toastControllerProvider.notifier).post(
+        Toast(
+          title: title,
+          body: body,
+          kind: ToastKind.error,
+          id: id,
+          duration: duration ?? const Duration(seconds: 4),
+        ),
+      );
+}
+
+void showSuccessToastFromRef(Ref ref, String title, {String? body, Object? id}) {
+  ref.read(toastControllerProvider.notifier).post(
+        Toast(title: title, body: body, kind: ToastKind.success, id: id),
+      );
+}
+
+void showWarningToastFromRef(Ref ref, String title, {String? body, Object? id}) {
+  ref.read(toastControllerProvider.notifier).post(
+        Toast(title: title, body: body, kind: ToastKind.warning, id: id),
+      );
+}
+
+void showInfoToastFromRef(Ref ref, String title, {String? body, Object? id}) {
   ref.read(toastControllerProvider.notifier).post(
         Toast(title: title, body: body, kind: ToastKind.info, id: id),
       );
@@ -201,6 +246,17 @@ void showDioErrorToast(
 }) {
   final d = describeDioError(error, fallback: fallbackBody ?? fallbackTitle);
   showErrorToast(ref, d.title, body: d.body, id: id);
+}
+
+void showDioErrorToastFromRef(
+  Ref ref,
+  Object error, {
+  String fallbackTitle = 'REQUEST FAILED',
+  String? fallbackBody,
+  Object? id,
+}) {
+  final d = describeDioError(error, fallback: fallbackBody ?? fallbackTitle);
+  showErrorToastFromRef(ref, d.title, body: d.body, id: id);
 }
 
 String? _extractDetail(Object? data) {
