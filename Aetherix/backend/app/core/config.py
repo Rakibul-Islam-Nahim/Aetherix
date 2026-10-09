@@ -34,9 +34,11 @@ class Settings(BaseSettings):
     puku_worker_token: str = Field(default="dev-only-puku-token", alias="PUKU_WORKER_TOKEN")
 
     # Admin panel password (separate from JWT — short-lived admin login)
-    # Production deployments MUST set ADMIN_PASSWORD in .env.
+    # Production deployments MUST set ADMIN_PASSWORD in .env. The
+    # default below is a non-secret dev placeholder that the operator
+    # is expected to override; it is intentionally not a real word.
     admin_password: str = Field(
-        default="nextProjectOrcus", alias="ADMIN_PASSWORD"
+        default="change_me_admin_password", alias="ADMIN_PASSWORD"
     )
 
     # Misc

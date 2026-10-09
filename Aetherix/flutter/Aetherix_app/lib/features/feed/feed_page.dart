@@ -252,7 +252,8 @@ class _FeedBodyState extends ConsumerState<_FeedBody> {
                   visible: visible,
                   total: total,
                   lastUpdated: _lastUpdated,
-                  onHeightChanged: (h) {
+                  onHeightChanged: (size) {
+                    final h = size.height;
                     if ((_barHeight.value - h).abs() > 0.5) {
                       _barHeight.value = h;
                     }
@@ -299,7 +300,7 @@ class _CollapsingAppBar extends StatelessWidget {
   final int visible;
   final int total;
   final ValueNotifier<DateTime> lastUpdated;
-  final ValueChanged<double> onHeightChanged;
+  final ValueChanged<Size> onHeightChanged;
   final Widget child;
 
   @override
