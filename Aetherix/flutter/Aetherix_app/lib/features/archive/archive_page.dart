@@ -165,7 +165,7 @@ class _ArchiveBodyState extends ConsumerState<ArchiveBody> {
             onOpenCalendar: () {
               ref.read(_calendarVisibleProvider.notifier).state = true;
             },
-            onRefresh: () {
+            onRefresh: () async {
               if (day != null) {
                 ref.invalidate(_dayArticlesProvider(day));
               }
